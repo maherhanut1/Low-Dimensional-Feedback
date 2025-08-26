@@ -19,8 +19,12 @@ class Trainer:
 				 evaluation_iterations: int,
 				 loss_fns: List[Tuple[Callable, float]],
 				 log_dir: str = 'runs/exp',
-				 checkpoint_dir: str = 'checkpoints'):
-		self.model = model
+				 checkpoint_dir: str = 'checkpoints',
+				 device: str = None,
+				 model_modify_fns: List[Callable] = None,
+				 model_modify_iters: int = None):
+		self.device = device if device is not None else (torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+		self.model = model.to(self.device)
 		self.optimizers = optimizers
 		self.schedulers = schedulers
 		self.train_loader = train_loader
@@ -31,6 +35,8 @@ class Trainer:
 		self.loss_fns = loss_fns
 		self.writer = SummaryWriter(log_dir=log_dir)
 		self.checkpoint_dir = checkpoint_dir
+		self.model_modify_fns = model_modify_fns if model_modify_fns is not None else []
+		self.model_modify_iters = model_modify_iters
 		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 	def train(self):
@@ -45,6 +51,8 @@ class Trainer:
 				train_iter = iter(self.train_loader)
 				batch = next(train_iter)
 			inputs, targets = batch
+			inputs = inputs.to(self.device)
+			targets = targets.to(self.device)
 			outputs = self.model(inputs)
 			# Weighted sum of all losses
 			total_loss = 0.0
@@ -59,6 +67,11 @@ class Trainer:
 				if hasattr(sch, 'step'):
 					sch.step()
 			iteration += 1
+			# Call model_modify_fns every model_modify_iters iterations (if set and not zero)
+			if self.model_modify_iters is not None and self.model_modify_iters > 0:
+				if iteration % self.model_modify_iters == 0:
+					for fn in self.model_modify_fns:
+						fn(self.model)
 			if iteration % self.evaluation_iterations == 0:
 				self.log_tensorboard(iteration)
 				self.save_checkpoint(iteration)
@@ -98,20 +111,33 @@ class Trainer:
 		self.model.eval()
 		total_loss = 0.0
 		total_batches = 0
-		metrics_results = { }
+		all_outputs = []
+		all_targets = []
+		metrics_results = {}
 		with torch.no_grad():
 			for batch in loader:
 				inputs, targets = batch
+				inputs = inputs.to(self.device)
+				targets = targets.to(self.device)
 				outputs = self.model(inputs)
 				batch_loss = 0.0
 				for loss_fn, weight in self.loss_fns:
 					batch_loss = batch_loss + weight * loss_fn(outputs, targets)
 				total_loss += batch_loss.item() if hasattr(batch_loss, 'item') else float(batch_loss)
 				total_batches += 1
-			# Compute metrics (use the first batch for metrics, or loop again if needed)
-			for metric_fn in self.metrics:
+				all_outputs.append(outputs.detach().cpu())
+				all_targets.append(targets.detach().cpu())
+		# Concatenate all outputs and targets
+		if all_outputs and all_targets:
+			all_outputs = torch.cat(all_outputs, dim=0)
+			all_targets = torch.cat(all_targets, dim=0)
+		# Compute metrics using accumulated outputs and targets
+		for metric_fn in self.metrics:
+			try:
+				value, name = metric_fn(all_outputs, all_targets)
+			except TypeError:
 				value, name = metric_fn(loader, self.model)
-				metrics_results[name] = value
+			metrics_results[name] = value
 		avg_loss = total_loss / max(total_batches, 1)
 		return {'total_loss': avg_loss, 'metrics': metrics_results}
 

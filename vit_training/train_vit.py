@@ -5,27 +5,22 @@ from training_utils.data_loader_factory import get_data_loaders
 import torch.nn as nn
 import torch.optim as optim
 
-def accuracy_metric(data_loader, model):
-    correct = 0
-    total = 0
-    model.eval()
-    with torch.no_grad():
-        for inputs, targets in data_loader:
-            outputs = model(inputs)
-            if isinstance(outputs, dict) and 'logits' in outputs:
-                outputs = outputs['logits']
-            _, predicted = torch.max(outputs, 1)
-            correct += (predicted == targets).sum().item()
-            total += targets.size(0)
+def accuracy_metric(outputs, targets):
+    # If outputs is a dict (e.g., {'logits': ...}), extract logits
+    if isinstance(outputs, dict) and 'logits' in outputs:
+        outputs = outputs['logits']
+    _, predicted = torch.max(outputs, 1)
+    correct = (predicted == targets).sum().item()
+    total = targets.size(0)
     acc = correct / total if total > 0 else 0.0
     return acc, 'accuracy'
 
 def main():
     # Config
     dataset = 'cifar10'
-    batch_size = 64
-    num_iterations = 200
-    evaluation_iterations = 20
+    batch_size = 256
+    num_iterations = 391 * 150
+    evaluation_iterations = 391
     lr = 3e-4
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -38,8 +33,20 @@ def main():
 
     # Loss and optimizer
     loss_fns = [(nn.CrossEntropyLoss(), 1.0)]
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    schedulers = []
+    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    # Add OneCycleLR scheduler
+    steps_per_epoch = len(train_loader)
+    epochs = num_iterations // steps_per_epoch
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=lr,
+        steps_per_epoch=steps_per_epoch,
+        epochs=epochs,
+        anneal_strategy='linear',
+        pct_start=0.3
+    )
+    # Wrap scheduler in a dict to indicate it should be stepped per batch
+    schedulers = [scheduler]
 
     # Metrics
     metrics = [accuracy_metric]
