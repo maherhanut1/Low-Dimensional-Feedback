@@ -1,8 +1,8 @@
-model: vit_b_16
+model: vit_h_14
 batch_size: 32
 image_size: 224
 num_classes: 1000
-ranks: [4, 8, 16, 32, 64, 128, 256, 512]
-device: cpu
-dtype: float32
+ranks: [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+device: cuda
+dtype: float16
 n_iters: 10
