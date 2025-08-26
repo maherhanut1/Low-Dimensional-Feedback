@@ -1,0 +1,20 @@
+# Ignore data files and folders
+/data/
+*.tar.gz
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore artifacts and runs (optional, comment out if needed)
+# /artifacts/
+# /runs/
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore VS Code settings
+.vscode/
+
+# Ignore macOS system files
+.DS_Store

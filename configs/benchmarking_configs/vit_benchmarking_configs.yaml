@@ -1,0 +1,8 @@
+model: vit_b_16
+batch_size: 32
+image_size: 224
+num_classes: 1000
+ranks: [4, 8, 16, 32, 64, 128, 256, 512]
+device: cpu
+dtype: float32
+n_iters: 10
