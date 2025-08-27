@@ -1,11 +1,8 @@
+import os
+from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import torch
 from typing import List, Callable, Tuple
-
-
-
-
-import os
 
 class Trainer:
 	def __init__(self,
@@ -15,8 +12,7 @@ class Trainer:
 				 train_loader,
 				 test_loader,
 				 metrics: List[Callable],
-				 num_iterations: int,
-				 evaluation_iterations: int,
+				 num_epochs: int,
 				 loss_fns: List[Tuple[Callable, float]],
 				 log_dir: str = 'runs/exp',
 				 checkpoint_dir: str = 'checkpoints',
@@ -30,8 +26,7 @@ class Trainer:
 		self.train_loader = train_loader
 		self.test_loader = test_loader
 		self.metrics = metrics
-		self.num_iterations = num_iterations
-		self.evaluation_iterations = evaluation_iterations
+		self.num_epochs = num_epochs
 		self.loss_fns = loss_fns
 		self.writer = SummaryWriter(log_dir=log_dir)
 		self.checkpoint_dir = checkpoint_dir
@@ -41,44 +36,44 @@ class Trainer:
 
 	def train(self):
 		self.model.train()
-		iteration = 0
-		train_iter = iter(self.train_loader)
-		while iteration < self.num_iterations:
-			print(f"Iteration {iteration+1}/{self.num_iterations}", end='\r')
-			try:
-				batch = next(train_iter)
-			except StopIteration:
-				train_iter = iter(self.train_loader)
-				batch = next(train_iter)
-			inputs, targets = batch
-			inputs = inputs.to(self.device)
-			targets = targets.to(self.device)
-			outputs = self.model(inputs)
-			# Weighted sum of all losses
-			total_loss = 0.0
-			for loss_fn, weight in self.loss_fns:
-				total_loss = total_loss + weight * loss_fn(outputs, targets)
-			for opt in self.optimizers:
-				opt.zero_grad()
-			total_loss.backward()
-			for opt in self.optimizers:
-				opt.step()
-			for sch in self.schedulers:
-				if hasattr(sch, 'step'):
-					sch.step()
-			iteration += 1
-			# Call model_modify_fns every model_modify_iters iterations (if set and not zero)
-			if self.model_modify_iters is not None and self.model_modify_iters > 0:
-				if iteration % self.model_modify_iters == 0:
-					for fn in self.model_modify_fns:
-						fn(self.model)
-			if iteration % self.evaluation_iterations == 0:
-				self.log_tensorboard(iteration)
-				self.save_checkpoint(iteration)
-		print(f"Iteration {self.num_iterations}/{self.num_iterations}")
-		# Final evaluation after all iterations
-		self.log_tensorboard(self.num_iterations)
-		self.save_checkpoint(self.num_iterations)
+		total_iterations = 0
+		num_batches = len(self.train_loader)
+		for epoch in range(self.num_epochs):
+			print(f"Epoch {epoch+1}/{self.num_epochs}")
+			pbar = tqdm(enumerate(self.train_loader), total=num_batches, desc=f"Epoch {epoch+1}")
+			for batch_idx, batch in pbar:
+				inputs, targets = batch
+				inputs = inputs.to(self.device)
+				targets = targets.to(self.device)
+				outputs = self.model(inputs)
+				# Weighted sum of all losses
+				total_loss = 0.0
+				for loss_fn, weight in self.loss_fns:
+					total_loss = total_loss + weight * loss_fn(outputs, targets)
+				for opt in self.optimizers:
+					opt.zero_grad()
+				total_loss.backward()
+				for opt in self.optimizers:
+					opt.step()
+				for sch in self.schedulers:
+					if hasattr(sch, 'step'):
+						sch.step()
+				total_iterations += 1
+				# Call model_modify_fns every model_modify_iters iterations (if set and not zero)
+				if self.model_modify_iters is not None and self.model_modify_iters > 0:
+					if total_iterations % self.model_modify_iters == 0:
+						for fn in self.model_modify_fns:
+							fn(self.model)
+				pbar.set_postfix({'loss': total_loss.item() if hasattr(total_loss, 'item') else total_loss})
+			# End of epoch: evaluate and log
+			self.log_tensorboard(epoch)
+			self.save_checkpoint(epoch)
+		print(f"Training complete: {self.num_epochs} epochs, {total_iterations} iterations.")
+		# Final evaluation after all epochs
+		self.log_tensorboard(self.num_epochs-1)
+		self.save_checkpoint(self.num_epochs-1)
+		self.writer.flush()
+		self.writer.close()
 
 	def save_checkpoint(self, iteration):
 		checkpoint = {
