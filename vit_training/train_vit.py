@@ -67,21 +67,17 @@ def main():
     train_loader, test_loader = get_data_loaders(dataset, batch_size=batch_size)
 
     # Model
-    from torchvision.models import ViT_B_16_Weights
-    import torch.nn.functional as F
-    weights = ViT_B_16_Weights.IMAGENET1K_V1
-    model = vit_b_16(image_size=image_size, num_classes=num_classes)
-    # model = BPVit(
-    #     image_size=32,
-    #     patch_size=4,
-    #     num_classes=10,
-    #     dim=384,
-    #     depth=6,
-    #     heads=8,
-    #     mlp_dim=384,
-    #     dropout=0.1,
-    #     emb_dropout=0.1,
-    # )
+    model = BPVit(
+        image_size=32,
+        patch_size=4,
+        num_classes=10,
+        dim=384,
+        depth=6,
+        heads=8,
+        mlp_dim=384,
+        dropout=0.1,
+        emb_dropout=0.1,
+    )
 
     if use_ldfa_linear:
         replace_linear(model, LDFA_Linear, rank=ldfa_rank)
