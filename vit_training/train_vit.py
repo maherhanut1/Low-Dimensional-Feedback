@@ -1,3 +1,4 @@
+import argparse
 import yaml
 import os
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
@@ -42,8 +43,13 @@ def accuracy_metric(outputs, targets):
     return acc, 'accuracy'
 
 def main():
-    # Load config from YAML
-    config_path = os.path.join(os.path.dirname(__file__), '../configs/train_vit_config.yaml')
+
+    parser = argparse.ArgumentParser(description='Train ViT with LDFA or BP')
+    parser.add_argument('--config', type=str, required=True, help='Path to YAML config file')
+    args = parser.parse_args()
+    config_path = args.config
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
 
