@@ -1,12 +1,21 @@
 import yaml
 import os
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
+from modules.opt_layers.BP_Linear import Linear as BP_Linear
 import torch
 from torchvision.models import vit_b_16
 from training_utils.trainer import Trainer
 from training_utils.data_loader_factory import get_data_loaders
 import torch.nn as nn
 import torch.optim as optim
+
+
+def reinitialize_pq_layers(model):
+    """Reinitialize P and Q matrices for all rAFA layers in the model"""
+    for module in model.modules():
+        if hasattr(module, 'init_svd_approx'):
+            module.init_svd_approx()
+
 
 def accuracy_metric(outputs, targets):
     # If outputs is a dict (e.g., {'logits': ...}), extract logits
@@ -16,6 +25,8 @@ def accuracy_metric(outputs, targets):
     correct = (predicted == targets).sum().item()
     total = targets.size(0)
     acc = correct / total if total > 0 else 0.0
+
+    print(f'acc: {acc}')
     return acc, 'accuracy'
 
 def main():
@@ -25,9 +36,9 @@ def main():
         config = yaml.safe_load(f)
 
     dataset = config.get('dataset', 'cifar10')
-    batch_size = config.get('batch_size', 64)
+    batch_size = config.get('batch_size', 128)
     num_epochs = config.get('num_epochs', 150)
-    lr = config.get('learning_rate', 5e-4)
+    lr = config.get('learning_rate', 3e-4)
     use_ldfa_linear = config.get('use_ldfa_linear', True)
     ldfa_rank = config.get('ldfa_rank', 16)
     model_name = config.get('model_name', 'vit_b_16')
@@ -57,19 +68,8 @@ def main():
 
     # Loss and optimizer
     loss_fns = [(nn.CrossEntropyLoss(), 1.0)]
-    optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     # Add OneCycleLR scheduler
     steps_per_epoch = len(train_loader)
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=lr,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs,
-        anneal_strategy='linear',
-        pct_start=0.15
-    )
-    # Wrap scheduler in a dict to indicate it should be stepped per batch
-    schedulers = [scheduler]
 
     # Metrics
     metrics = [accuracy_metric]
@@ -78,15 +78,76 @@ def main():
     checkpoint_dir = f'artifacts/training_checkpoints/{dataset}/{model_name}/{log_name}'
     log_dir = f'artifacts/training_checkpoints/{dataset}/{model_name}/{log_name}/logs'
 
+
+    if use_ldfa_linear:
+        # modifiable_modules = [module for module in model.modules() if hasattr(module, 'init_svd_approx')]
+        qp_params = []
+        model_params = []
+            
+        for name, param in model.named_parameters():
+            if 'P' in name or 'Q' in name:
+                qp_params.append(param)
+            else:
+                model_params.append(param)
+        
+        model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=1e-4)
+        qp_optimizer = optim.AdamW(qp_params, lr=5*lr, weight_decay=1e-4)
+
+
+        model_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        model_optimizer,
+        max_lr=lr,
+        steps_per_epoch=steps_per_epoch,
+        epochs=num_epochs,
+        anneal_strategy='linear',
+        pct_start=0.15
+    )
+
+        qp_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        qp_optimizer,
+        max_lr=5*lr,
+        steps_per_epoch=steps_per_epoch,
+        epochs=num_epochs,
+        anneal_strategy='linear',
+        pct_start=0.15
+    )
+
+        optimizers = [model_optimizer, qp_optimizer]
+        schedulers = [model_scheduler, qp_scheduler]
+        modify_funcs = [reinitialize_pq_layers]
+        modification_rate = 75
+
+    else:
+
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=lr,
+        steps_per_epoch=steps_per_epoch,
+        epochs=num_epochs,
+        anneal_strategy='linear',
+        pct_start=0.15
+    )
+        schedulers = [scheduler]
+        optimizers = [optimizer]
+        modify_funcs = None
+        modification_rate = None
+
+
+
+
     trainer = Trainer(
         model=model,
-        optimizers=[optimizer],
+        optimizers=optimizers,
         schedulers=schedulers,
         train_loader=train_loader,
         test_loader=test_loader,
         metrics=metrics,
         num_epochs=num_epochs,
         loss_fns=loss_fns,
+        model_modify_fns=modify_funcs,
+        model_modify_iters=modification_rate,
         log_dir=log_dir,
         checkpoint_dir=checkpoint_dir
     )

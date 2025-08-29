@@ -8,7 +8,7 @@ try:
 except ImportError:
     CocoDetection = None
 
-def get_data_loaders(dataset_name: str, batch_size: int = 64, root: str = './data', train_transform=None, test_transform=None, coco_annFile_train=None, coco_annFile_val=None, num_workers: int = 2):
+def get_data_loaders(dataset_name: str, batch_size: int = 64, root: str = './data', train_transform=None, test_transform=None, coco_annFile_train=None, coco_annFile_val=None, num_workers: int = 8):
     """
     Returns train_loader, test_loader for the specified dataset.
     dataset_name: 'cifar10', 'cifar100', or 'coco_segmentation'
@@ -28,8 +28,14 @@ def get_data_loaders(dataset_name: str, batch_size: int = 64, root: str = './dat
             ])
         train_set = datasets.CIFAR10(root=root, train=True, download=True, transform=train_transform)
         test_set = datasets.CIFAR10(root=root, train=False, download=True, transform=test_transform)
-        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-        test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers)
+        train_loader = DataLoader(
+            train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+            pin_memory=True, prefetch_factor=2
+        )
+        test_loader = DataLoader(
+            test_set, batch_size=64, shuffle=False, num_workers=num_workers,
+            pin_memory=True, prefetch_factor=2
+        )
         return train_loader, test_loader
 
     elif dataset_name.lower() == 'cifar100':
@@ -47,8 +53,14 @@ def get_data_loaders(dataset_name: str, batch_size: int = 64, root: str = './dat
             ])
         train_set = datasets.CIFAR100(root=root, train=True, download=True, transform=train_transform)
         test_set = datasets.CIFAR100(root=root, train=False, download=True, transform=test_transform)
-        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-        test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers)
+        train_loader = DataLoader(
+            train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+            pin_memory=True, prefetch_factor=2
+        )
+        test_loader = DataLoader(
+            test_set, batch_size=64, shuffle=False, num_workers=num_workers,
+            pin_memory=True, prefetch_factor=2
+        )
         return train_loader, test_loader
 
     elif dataset_name.lower() == 'coco_segmentation':
@@ -62,8 +74,14 @@ def get_data_loaders(dataset_name: str, batch_size: int = 64, root: str = './dat
             test_transform = transforms.ToTensor()
         train_set = CocoDetection(root=root+'/train2017', annFile=coco_annFile_train, transform=train_transform)
         test_set = CocoDetection(root=root+'/val2017', annFile=coco_annFile_val, transform=test_transform)
-        train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-        test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers)
+        train_loader = DataLoader(
+            train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers,
+            pin_memory=True, prefetch_factor=2
+        )
+        test_loader = DataLoader(
+            test_set, batch_size=64, shuffle=False, num_workers=num_workers,
+            pin_memory=True, prefetch_factor=2
+        )
         return train_loader, test_loader
 
     else:

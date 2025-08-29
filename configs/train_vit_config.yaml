@@ -1,10 +1,10 @@
 # Training configuration for ViT
 # Example: edit these values as needed
-learning_rate: 0.0005
-batch_size: 64
+learning_rate: 0.0002
+batch_size: 128
 num_epochs: 150
-use_ldfa_linear: true
-ldfa_rank: 16
+use_ldfa_linear: True
+ldfa_rank: 32
 dataset: cifar10
 model_name: vit_b_16
 image_size: 32
