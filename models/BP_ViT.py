@@ -1,28 +1,27 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from modules.opt_layers.LDFA_Linear import Linear as rAFA_Linear
 import math
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout = 0., rank=10):
+    def __init__(self, dim, hidden_dim, dropout = 0.):
         super().__init__()
         self.net = nn.Sequential(
             nn.LayerNorm(dim),
-            rAFA_Linear(dim, hidden_dim, rank=rank),
+            nn.Linear(dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(dropout),
-            rAFA_Linear(hidden_dim, dim, rank=rank),
+            nn.Linear(hidden_dim, dim),
             nn.Dropout(dropout)
         )
     def forward(self, x):
         return self.net(x)
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0., rank=10):
+    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
         super().__init__()
         inner_dim = dim_head * heads
         project_out = not (heads == 1 and dim_head == dim)
@@ -35,12 +34,12 @@ class Attention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # Use three separate linear layers for q, k, v
-        self.to_q = rAFA_Linear(dim, inner_dim, bias = False, rank=rank)
-        self.to_k = rAFA_Linear(dim, inner_dim, bias = False, rank=rank)
-        self.to_v = rAFA_Linear(dim, inner_dim, bias = False, rank=rank)
+        self.to_q = nn.Linear(dim, inner_dim, bias = False)
+        self.to_k = nn.Linear(dim, inner_dim, bias = False)
+        self.to_v = nn.Linear(dim, inner_dim, bias = False)
 
         self.to_out = nn.Sequential(
-            rAFA_Linear(inner_dim, dim, rank=rank),
+            nn.Linear(inner_dim, dim),
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
 
@@ -64,13 +63,13 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0., rank=10):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
         super().__init__()
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout, rank=rank),
-                FeedForward(dim, mlp_dim, dropout = dropout, rank=rank)
+                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
+                FeedForward(dim, mlp_dim, dropout = dropout)
             ]))
     def forward(self, x):
         for attn, ff in self.layers:
@@ -78,8 +77,8 @@ class Transformer(nn.Module):
             x = ff(x) + x
         return x
 
-class RafViTV2(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0., rank=10):
+class BPVit(nn.Module):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.):
         super().__init__()
         image_height, image_width = image_size, image_size
         patch_height, patch_width = patch_size, patch_size
@@ -101,7 +100,7 @@ class RafViTV2(nn.Module):
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
         self.dropout = nn.Dropout(emb_dropout)
 
-        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout, rank=rank)
+        self.transformer = Transformer(dim, depth, heads, dim_head, mlp_dim, dropout)
 
         self.pool = pool
         self.to_latent = nn.Identity()

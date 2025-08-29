@@ -78,13 +78,13 @@ class Linear(nn.Linear):
             self.layer_config["options"] = {
                 "gradient_clip": True,
                 "init": "kaiming",
-                "svd_niter": 2,
+                "svd_niter": 10,
                 "clip_value": 10.0
             }
         self.options = self.layer_config["options"]
         self.init = self.options["init"]
         self.rank = rank
-        self.svd_niter = self.layer_config.get("svd_niter", 2) 
+        self.svd_niter = self.layer_config.get("svd_niter", 10)
         self.Q = nn.Parameter(torch.Tensor(self.rank, in_features), requires_grad=update_Q)
         self.P = nn.Parameter(torch.Tensor(out_features, self.rank), requires_grad=update_P)
         
@@ -101,13 +101,13 @@ class Linear(nn.Linear):
                     param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value))
     
     
-    def init_svd_approx(self, niter: int = 2):
+    def init_svd_approx(self, niter: int = 10):
         """
         Initialize P and Q using a **randomized** SVD to approximate the weight matrix W.
         This is much more efficient than a full SVD for large matrices.
         """
 
-        U, S, V = torch.svd_lowrank(self.weight.data, q=self.rank, niter=2)
+        U, S, V = torch.svd_lowrank(self.weight.data, q=self.rank, niter=self.svd_niter)
         
         # Note: torch.svd_lowrank returns V, not V.T as torch.linalg.svd does.
         # V has shape (in_features, rank), so we need its transpose.
