@@ -9,7 +9,7 @@ from typing import List, Callable, Tuple
 def replace_linear(module, new_linear_cls, **kwargs):
 	for name, child in module.named_children():
 		if isinstance(child, LDFA_Linear):
-			child.is_LDFA = 1.0
+			child.is_LDFA.data = 1.0
 			print(f"Replaced {name} with LDFA_Linear")
 
 class Trainer:
