@@ -63,7 +63,7 @@ class Trainer:
 				if self.model_modify_iters is not None and self.model_modify_iters > 0:
 					if total_iterations % self.model_modify_iters == 0:
 						for fn in self.model_modify_fns:
-							fn(self.model)
+							fn(self)
 				pbar.set_postfix({'loss': total_loss.item() if hasattr(total_loss, 'item') else total_loss})
 			# End of epoch: evaluate and log
 			self.log_tensorboard(epoch)

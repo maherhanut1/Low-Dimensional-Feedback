@@ -23,11 +23,15 @@ def replace_linear(module, new_linear_cls, **kwargs):
         else:
             replace_linear(child, new_linear_cls, **kwargs)
 
-def reinitialize_pq_layers(model, r):
-    """Reinitialize P and Q matrices for all rAFA layers in the model"""
-    for module in model.modules():
+
+def reinitialize_pq_layers(trainer, r=None):
+    """Reinitialize P and Q matrices for all rAFA layers in the model and clear qp_optimizer state"""
+    for module in trainer.model.modules():
         if hasattr(module, 'init_svd_approx'):
             module.init_svd_approx()
+    # Clear qp_optimizer state (assume it's the second optimizer in the list)
+    if len(trainer.optimizers) > 1:
+        trainer.optimizers[1].state.clear()
 
 
 def accuracy_metric(outputs, targets):
@@ -91,6 +95,8 @@ def main():
         replace_linear(model, BP_Linear)
     model = model.to(device)
 
+    print('*******', use_ldfa_linear, "###########")
+
     # Loss and optimizer
     loss_fns = [(nn.CrossEntropyLoss(), 1.0)]
     # Add OneCycleLR scheduler
@@ -139,7 +145,7 @@ def main():
 
         optimizers = [model_optimizer, qp_optimizer]
         schedulers = [model_scheduler, qp_scheduler]
-        modify_funcs = [lambda model: reinitialize_pq_layers(model, 0.5)]
+        modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
         modification_rate = 50
 
     else:
