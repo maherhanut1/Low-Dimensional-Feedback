@@ -3,14 +3,16 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import torch
 import torch.nn as nn
-import modules.opt_layers.LDFA_Linear as LDFA_Linear
+from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from typing import List, Callable, Tuple
 
-def replace_linear(module, new_linear_cls, **kwargs):
+def replace_linear(module):
 	for name, child in module.named_children():
 		if isinstance(child, LDFA_Linear):
 			child.is_LDFA.data = 1.0
 			print(f"Replaced {name} with LDFA_Linear")
+		else:
+			replace_linear(child)
 
 class Trainer:
 	def __init__(self,
@@ -54,7 +56,7 @@ class Trainer:
 		for epoch in range(self.num_epochs):
 
 			if epoch == self.switch_LDFA_epoch:
-				replace_linear(self.model, LDFA_Linear, rank=self.ldfa_rank, is_LDFA=True)
+				replace_linear(self.model)
 
 			print(f"Epoch {epoch+1}/{self.num_epochs}")
 			pbar = tqdm(enumerate(self.train_loader), total=num_batches, desc=f"Epoch {epoch+1}")
