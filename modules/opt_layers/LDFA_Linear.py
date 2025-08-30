@@ -12,7 +12,7 @@ class LinearGrad(autograd.Function):
     """
     @staticmethod
     # Same as reference linear function, but with additional weight tensor for backward
-    def forward(context, input, weight, P, Q, bias=None, is_LDFA=True):
+    def forward(context, input, weight, P, Q, bias=None, is_LDFA=1.0):
         
         output = input @ (weight.t())
         if bias is not None:
@@ -74,7 +74,7 @@ class LinearGrad(autograd.Function):
 
 
 class Linear(nn.Linear):
-    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True, is_LDFA = True) -> None:
+    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True, is_LDFA = 1.0) -> None:
         self.layer_config = layer_config or {}
         super(Linear, self).__init__(in_features, out_features, bias)
 

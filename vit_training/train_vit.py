@@ -90,7 +90,7 @@ def main():
     )
 
     if use_ldfa_linear:
-        replace_linear(model, LDFA_Linear, rank=ldfa_rank, is_LDFA=False)
+        replace_linear(model, LDFA_Linear, rank=ldfa_rank, is_LDFA=0.0)
     else:
         replace_linear(model, BP_Linear)
     model = model.to(device)
