@@ -56,6 +56,7 @@ def accuracy_metric(outputs, targets):
 
 
 
+
 def main():
     parser = argparse.ArgumentParser(description='Hybrid BP/LDFA ViT Training')
     parser.add_argument('--config', type=str, required=True, help='Path to YAML config file')
@@ -147,38 +148,29 @@ def main():
     replace_linear(model, LDFA_Linear, rank=ldfa_rank)
     model = model.to(device)
 
-    # Rebuild optimizer for LDFA (split params)
-    qp_params = []
-    model_params = []
-    for name, param in model.named_parameters():
-        if 'P' in name or 'Q' in name:
-            qp_params.append(param)
-        else:
-            model_params.append(param)
-    model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
-    qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
-    # Continue with constant LR for phase 2 (no OneCycle warmup)
-    model_scheduler = torch.optim.lr_scheduler.LambdaLR(model_optimizer, lr_lambda=lambda epoch: 1.0)
-    qp_scheduler = torch.optim.lr_scheduler.LambdaLR(qp_optimizer, lr_lambda=lambda epoch: 1.0)
-    optimizers = [model_optimizer, qp_optimizer]
-    schedulers = [model_scheduler, qp_scheduler]
-    modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
-    modification_rate = 50
+    # Update trainer's model
+    trainer.model = model
 
-    trainer = Trainer(
-        model=model,
-        optimizers=optimizers,
-        schedulers=schedulers,
-        train_loader=train_loader,
-        test_loader=test_loader,
-        metrics=metrics,
-        num_epochs=num_epochs-warmup_epochs,
-        loss_fns=loss_fns,
-        model_modify_fns=modify_funcs,
-        model_modify_iters=modification_rate,
-        log_dir=log_dir,
-        checkpoint_dir=checkpoint_dir
-    )
+    # Update optimizer param groups in-place to point to new model's parameters (for non-LDFA params)
+    new_params = [p for name, p in model.named_parameters() if not (('P' in name) or ('Q' in name))]
+    trainer.optimizers[0].param_groups[0]['params'] = new_params
+
+    # Add new optimizer for LDFA P/Q params
+    qp_params = [p for name, p in model.named_parameters() if ('P' in name) or ('Q' in name)]
+    if qp_params:
+        qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
+        trainer.optimizers.append(qp_optimizer)
+        # Add dummy scheduler for new optimizer (constant LR)
+        qp_scheduler = torch.optim.lr_scheduler.LambdaLR(qp_optimizer, lr_lambda=lambda epoch: 1.0)
+        trainer.schedulers.append(qp_scheduler)
+
+    # Set LDFA modification functions and rate
+    trainer.model_modify_fns = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
+    trainer.model_modify_iters = 50
+
+    # Continue training with same trainer, optimizer, scheduler, and TensorBoard writer
+    trainer.num_epochs = num_epochs - warmup_epochs
+    print(f"[Hybrid] Continuing training with LDFA for {trainer.num_epochs} epochs...")
     trainer.train()
 
 
