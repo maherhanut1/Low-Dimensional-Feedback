@@ -12,7 +12,7 @@ class LinearGrad(autograd.Function):
     """
     @staticmethod
     # Same as reference linear function, but with additional weight tensor for backward
-    def forward(context, input, weight, P, Q, is_LDFA, bias=None):
+    def forward(context, input, weight, P, Q, bias, is_LDFA):
         
         output = input @ (weight.t())
         if bias is not None:
@@ -88,7 +88,7 @@ class Linear(nn.Linear):
         self.options = self.layer_config["options"]
         self.init = self.options["init"]
         self.rank = rank
-        self.is_LDFA = nn.Parameter(torch.tensor(is_LDFA))
+        self.is_LDFA = nn.Parameter(torch.tensor(is_LDFA), requires_grad=False)
         self.svd_niter = self.layer_config.get("svd_niter", 10)
         self.Q = nn.Parameter(torch.Tensor(self.rank, in_features), requires_grad=update_Q)
         self.P = nn.Parameter(torch.Tensor(out_features, self.rank), requires_grad=update_P)
@@ -99,11 +99,11 @@ class Linear(nn.Linear):
         self.init_parameters()
 
 
-        if self.options['gradient_clip']:
-            clip_value = self.options.get('clip_value', 10.0)
-            for param in self.parameters():
-                if param.requires_grad:
-                    param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value))
+        # if self.options['gradient_clip']:
+        #     clip_value = self.options.get('clip_value', 10.0)
+        #     for param in self.parameters():
+        #         if param.requires_grad and param is not None:
+        #             param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value))
     
     
     def init_svd_approx(self, niter: int = 10):
@@ -149,13 +149,13 @@ class Linear(nn.Linear):
 
 
     def forward(self, x: Tensor, gt=None) -> Tensor:
-        return LinearGrad.apply(x, self.weight, self.P, self.Q, self.is_LDFA, self.bias)
+        return LinearGrad.apply(x, self.weight, self.P, self.Q, self.bias, self.is_LDFA)
 
 
     @staticmethod
     def gradient_clip(module, grad_input, grad_output):
         grad_input = list(grad_input)
         for i in range(len(grad_input)):
-            if grad_input[i] is not None:
+            if grad_input is not None and grad_input[i] is not None:
                 grad_input[i] = torch.clamp(grad_input[i], -10, 10)
         return tuple(grad_input)
