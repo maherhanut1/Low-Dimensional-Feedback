@@ -90,7 +90,7 @@ def main():
     )
 
     if use_ldfa_linear:
-        replace_linear(model, LDFA_Linear, rank=ldfa_rank)
+        replace_linear(model, LDFA_Linear, rank=ldfa_rank, is_LDFA=False)
     else:
         replace_linear(model, BP_Linear)
     model = model.to(device)
@@ -180,7 +180,9 @@ def main():
         model_modify_fns=modify_funcs,
         model_modify_iters=modification_rate,
         log_dir=log_dir,
-        checkpoint_dir=checkpoint_dir
+        checkpoint_dir=checkpoint_dir,
+        switch_LDFA_epoch=15,
+        ldfa_rank=ldfa_rank,
     )
     trainer.train()
 

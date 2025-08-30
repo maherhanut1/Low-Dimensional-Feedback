@@ -2,7 +2,15 @@ import os
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import torch
+import torch.nn as nn
+import modules.opt_layers.LDFA_Linear as LDFA_Linear
 from typing import List, Callable, Tuple
+
+def replace_linear(module, new_linear_cls, **kwargs):
+	for name, child in module.named_children():
+		if isinstance(child, LDFA_Linear):
+			child.is_LDFA = True
+			print(f"Replaced {name} with LDFA_Linear")
 
 class Trainer:
 	def __init__(self,
@@ -18,7 +26,10 @@ class Trainer:
 				 checkpoint_dir: str = 'checkpoints',
 				 device: str = None,
 				 model_modify_fns: List[Callable] = None,
-				 model_modify_iters: int = None):
+				 model_modify_iters: int = None,
+				 switch_LDFA_epoch: int = None,
+				 ldfa_rank: int = None,
+				):
 		self.device = device if device is not None else (torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 		self.model = model.to(self.device)
 		self.optimizers = optimizers
@@ -32,6 +43,8 @@ class Trainer:
 		self.checkpoint_dir = checkpoint_dir
 		self.model_modify_fns = model_modify_fns if model_modify_fns is not None else []
 		self.model_modify_iters = model_modify_iters
+		self.switch_LDFA_epoch = switch_LDFA_epoch
+		self.ldfa_rank = ldfa_rank
 		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 	def train(self):
@@ -39,6 +52,10 @@ class Trainer:
 		total_iterations = 0
 		num_batches = len(self.train_loader)
 		for epoch in range(self.num_epochs):
+
+			if epoch == self.switch_LDFA_epoch:
+				replace_linear(self.model, LDFA_Linear, rank=self.ldfa_rank, is_LDFA=True)
+
 			print(f"Epoch {epoch+1}/{self.num_epochs}")
 			pbar = tqdm(enumerate(self.train_loader), total=num_batches, desc=f"Epoch {epoch+1}")
 			for batch_idx, batch in pbar:

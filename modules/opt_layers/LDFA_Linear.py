@@ -12,25 +12,29 @@ class LinearGrad(autograd.Function):
     """
     @staticmethod
     # Same as reference linear function, but with additional weight tensor for backward
-    def forward(context, input, weight, P, Q, bias=None):
+    def forward(context, input, weight, P, Q, bias=None, is_LDFA=True):
         
         output = input @ (weight.t())
         if bias is not None:
             output += bias.unsqueeze(0).expand_as(output)
         
-        context.save_for_backward(input, weight, P, Q, bias)
+        context.save_for_backward(input, weight, P, Q, bias, is_LDFA)
         return output
 
     @staticmethod
     def backward(context, grad_output):
-        input, weight, P, Q, bias = context.saved_tensors
+        input, weight, P, Q, bias, is_LDFA = context.saved_tensors
         grad_input = grad_weight = grad_Q = grad_P = grad_bias = grad_input_intermediate = None
         # Gradient input
         
         if context.needs_input_grad[0]:
-            grad_input_intermediate = grad_output @ (P)
-            grad_input = grad_input_intermediate @ (Q)
-         
+
+            if is_LDFA:
+                grad_input_intermediate = grad_output @ (P)
+                grad_input = grad_input_intermediate @ (Q)
+            else:
+                grad_input = grad_output @ (weight)
+
         if context.needs_input_grad[1]:
             # grad_output = grad_output.reshape(-1, grad_output.shape[-1])
             # input = input.view(-1, input.shape[-1])
@@ -48,14 +52,14 @@ class LinearGrad(autograd.Function):
                 B, _ = grad_output.shape
                 total_len = B
         
-        if context.needs_input_grad[2]:
+        if context.needs_input_grad[2] and is_LDFA:
             if in_features * out_features > total_len * (in_features + out_features):
                 input_Q = torch.matmul(input, Q.t())  # (..., rank)
                 grad_P = torch.einsum('...o,...r->or', grad_output, input_Q)
             else:
                 grad_P = grad_weight @ Q.t()
-              
-        if grad_input_intermediate is not None and context.needs_input_grad[3]:
+
+        if grad_input_intermediate is not None and context.needs_input_grad[3] and is_LDFA:
             if total_len < in_features:
                 grad_Q = torch.einsum('...r,...i->ri', grad_input_intermediate, input)
             else:
@@ -65,12 +69,12 @@ class LinearGrad(autograd.Function):
         if bias is not None and context.needs_input_grad[4]:
             grad_bias = grad_output.sum(0).squeeze(0)
 
-        return grad_input, grad_weight, grad_P, grad_Q, grad_bias
+        return grad_input, grad_weight, grad_P, grad_Q, grad_bias, None
 
 
 
 class Linear(nn.Linear):
-    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True, requires_gt = False) -> None:
+    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True, is_LDFA = True) -> None:
         self.layer_config = layer_config or {}
         super(Linear, self).__init__(in_features, out_features, bias)
 
@@ -84,6 +88,7 @@ class Linear(nn.Linear):
         self.options = self.layer_config["options"]
         self.init = self.options["init"]
         self.rank = rank
+        self.is_LDFA = is_LDFA
         self.svd_niter = self.layer_config.get("svd_niter", 10)
         self.Q = nn.Parameter(torch.Tensor(self.rank, in_features), requires_grad=update_Q)
         self.P = nn.Parameter(torch.Tensor(out_features, self.rank), requires_grad=update_P)
