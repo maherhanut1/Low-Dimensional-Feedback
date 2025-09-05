@@ -64,7 +64,7 @@ def main():
     weight_decay = config.get('weight_decay', 1e-4)
 
     use_ldfa_linear = config.get('use_ldfa_linear', True)
-    ldfa_rank = config.get('ldfa_rank', 16)
+    ldfa_rank = config.get('ldfa_rank', 32)
     qp_lr = config.get('qp_lr', lr)
     qp_weight_decay = config.get('qp_weight_decay', weight_decay)
     model_name = config.get('model_name', 'vit_b_16')
@@ -140,7 +140,8 @@ def main():
         steps_per_epoch=steps_per_epoch,
         epochs=num_epochs,
         anneal_strategy='linear',
-        pct_start=0.15
+        pct_start=0.15,
+        final_div_factor=500,
     )
 
         optimizers = [model_optimizer, qp_optimizer]

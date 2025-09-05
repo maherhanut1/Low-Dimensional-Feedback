@@ -1,13 +1,13 @@
 # Training configuration for ViT
 # Example: edit these values as needed
-learning_rate: 0.0015
+learning_rate: 0.001
 weight_decay: 0.00005
 batch_size: 128
 num_epochs: 200
 
 use_ldfa_linear: True
 ldfa_rank: 32
-qp_lr: 0.0015
+qp_lr: 0.008
 qp_weight_decay: 0.000025
 
 dataset: cifar10

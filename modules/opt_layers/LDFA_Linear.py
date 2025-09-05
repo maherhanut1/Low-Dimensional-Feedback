@@ -48,18 +48,19 @@ class LinearGrad(autograd.Function):
                 B, _ = grad_output.shape
                 total_len = B
         
+        E = (P @ Q - weight)
         if context.needs_input_grad[2]:
-            if in_features * out_features > total_len * (in_features + out_features):
-                input_Q = torch.matmul(input, Q.t())  # (..., rank)
-                grad_P = torch.einsum('...o,...r->or', grad_output, input_Q)
-            else:
-                grad_P = grad_weight @ Q.t()
+            # if in_features * out_features > total_len * (in_features + out_features):
+            #     input_Q = torch.matmul(input, Q.t())  # (..., rank)
+            #     grad_P = torch.einsum('...o,...r->or', grad_output, input_Q)
+            # else:
+            grad_P = E @ Q.t()
               
         if grad_input_intermediate is not None and context.needs_input_grad[3]:
-            if total_len < in_features:
-                grad_Q = torch.einsum('...r,...i->ri', grad_input_intermediate, input)
-            else:
-                grad_Q = P.t() @ grad_weight
+            # if total_len < in_features:
+            #     grad_Q = torch.einsum('...r,...i->ri', grad_input_intermediate, input)
+            # else:
+            grad_Q = P.t() @ E
         
         # Gradient bias
         if bias is not None and context.needs_input_grad[4]:
@@ -83,7 +84,7 @@ class Linear(nn.Linear):
             }
         self.options = self.layer_config["options"]
         self.init = self.options["init"]
-        self.rank = rank
+        self.rank = min(rank, in_features, out_features)
         self.svd_niter = self.layer_config.get("svd_niter", 10)
         self.Q = nn.Parameter(torch.Tensor(self.rank, in_features), requires_grad=update_Q)
         self.P = nn.Parameter(torch.Tensor(out_features, self.rank), requires_grad=update_P)
