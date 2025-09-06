@@ -71,7 +71,7 @@ class LinearGrad(autograd.Function):
 
 
 class Linear(nn.Linear):
-    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True, requires_gt = False) -> None:
+    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True) -> None:
         self.layer_config = layer_config or {}
         super(Linear, self).__init__(in_features, out_features, bias)
 
