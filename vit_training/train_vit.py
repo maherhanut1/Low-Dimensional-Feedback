@@ -131,7 +131,8 @@ def main():
         steps_per_epoch=steps_per_epoch,
         epochs=num_epochs,
         anneal_strategy='linear',
-        pct_start=0.15
+        pct_start=0.15,
+        final_div_factor=1000,
     )
 
         qp_scheduler = torch.optim.lr_scheduler.OneCycleLR(
@@ -141,13 +142,13 @@ def main():
         epochs=num_epochs,
         anneal_strategy='linear',
         pct_start=0.15,
-        final_div_factor=500,
+        final_div_factor=50,
     )
 
         optimizers = [model_optimizer, qp_optimizer]
         schedulers = [model_scheduler, qp_scheduler]
         modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
-        modification_rate = 50
+        modification_rate = 100
 
     else:
 
