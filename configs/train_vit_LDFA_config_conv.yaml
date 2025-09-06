@@ -1,0 +1,17 @@
+# Training configuration for ViT
+# Example: edit these values as needed
+learning_rate: 0.0005
+weight_decay: 0.000005
+batch_size: 128
+num_epochs: 150
+
+use_ldfa_linear: True
+ldfa_rank: 32
+qp_lr: 0.001
+qp_weight_decay: 0.0
+ 
+dataset: cifar10
+model_name: resnet18
+image_size: 32
+num_classes: 10  
+log_name: finetune_LDFA

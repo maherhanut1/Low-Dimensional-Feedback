@@ -18,6 +18,7 @@ class Trainer:
 				 checkpoint_dir: str = 'checkpoints',
 				 device: str = None,
 				 model_modify_fns: List[Callable] = None,
+				 scheduler_per_epoch: bool = False,
 				 model_modify_iters: int = None):
 		self.device = device if device is not None else (torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 		self.model = model.to(self.device)
@@ -32,6 +33,7 @@ class Trainer:
 		self.checkpoint_dir = checkpoint_dir
 		self.model_modify_fns = model_modify_fns if model_modify_fns is not None else []
 		self.model_modify_iters = model_modify_iters
+		self.scheduler_per_epoch = scheduler_per_epoch
 		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 	def train(self):
@@ -55,9 +57,12 @@ class Trainer:
 				total_loss.backward()
 				for opt in self.optimizers:
 					opt.step()
-				for sch in self.schedulers:
-					if hasattr(sch, 'step'):
-						sch.step()
+				
+				if self.scheduler_per_epoch is False:
+					for sch in self.schedulers:
+						if hasattr(sch, 'step'):
+							sch.step()
+
 				total_iterations += 1
 				# Call model_modify_fns every model_modify_iters iterations (if set and not zero)
 				if self.model_modify_iters is not None and self.model_modify_iters > 0:
@@ -68,6 +73,12 @@ class Trainer:
 			# End of epoch: evaluate and log
 			self.log_tensorboard(epoch)
 			self.save_checkpoint(epoch)
+
+			if self.scheduler_per_epoch:
+				for sch in self.schedulers:
+					if hasattr(sch, 'step'):
+						sch.step()
+
 		print(f"Training complete: {self.num_epochs} epochs, {total_iterations} iterations.")
 		# Final evaluation after all epochs
 		self.log_tensorboard(self.num_epochs-1)
