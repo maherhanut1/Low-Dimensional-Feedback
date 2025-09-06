@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from torchvision.models import vit_b_16, ViT_B_16_Weights
 from einops import rearrange
 from einops.layers.torch import Rearrange
 
@@ -127,3 +128,67 @@ class BPVit(nn.Module):
 
         x = self.to_latent(x)
         return self.mlp_head(x)
+
+
+################### VIT_16_B based ################
+
+
+class ViTForCifar10(nn.Module):
+    """
+    A wrapper for the ViT model, modified for CIFAR-10.
+    This version assumes input tensors are ALREADY preprocessed.
+    """
+    def __init__(self, num_classes=10, in_channels=3, image_size=32, patch_size=4):
+        super().__init__()
+        
+        # --- 1. Load Pre-trained ViT Model ---
+        self.vit = vit_b_16(weights=ViT_B_16_Weights.IMAGENET1K_V1)
+        
+        # --- 2. Update All Necessary Internal Model Attributes ---
+        
+        # a) THE DEFINITIVE FIX: Update the patch_size attribute 🔧
+        self.vit.patch_size = patch_size
+        
+        # b) Update the image size attribute
+        self.vit.image_size = image_size
+        
+        # c) Calculate the new number of patches and sequence length
+        num_patches = (image_size // patch_size) ** 2
+        seq_length = num_patches + 1
+        
+        # d) Update the encoder's sequence length attribute
+        self.vit.encoder.seq_length = seq_length
+        
+        # --- 3. Modify the Model Architecture ---
+        hidden_dim = self.vit.hidden_dim
+
+        # a) Modify the Patch Embedding layer to match the new patch size
+        self.vit.conv_proj = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=hidden_dim,
+            kernel_size=patch_size,
+            stride=patch_size
+        )
+
+        # b) Modify the Positional Embeddings to match the new sequence length
+        self.vit.encoder.pos_embedding = nn.Parameter(
+            torch.randn(1, seq_length, hidden_dim)
+        )
+
+        # c) Modify the Classifier Head for the new number of classes
+        self.vit.heads.head = nn.Linear(
+            in_features=hidden_dim,
+            out_features=num_classes
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Performs a forward pass on a preprocessed tensor.
+        
+        Args:
+            x (torch.Tensor): A preprocessed tensor of shape (B, 3, 32, 32).
+        
+        Returns:
+            torch.Tensor: Logits of shape (B, num_classes).
+        """
+        return self.vit(x)
