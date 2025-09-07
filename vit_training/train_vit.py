@@ -72,7 +72,7 @@ def main():
     num_classes = config.get('num_classes', 10)
     log_name = config.get('log_name', 'default_run')
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' #'cuda' if torch.cuda.is_available() else 'cpu'
     # Data
     train_loader, test_loader = get_data_loaders(dataset, batch_size=batch_size)
 
@@ -102,6 +102,8 @@ def main():
     # Add OneCycleLR scheduler
     steps_per_epoch = len(train_loader)
 
+
+
     # Metrics
     metrics = [accuracy_metric]
 
@@ -120,48 +122,34 @@ def main():
                 qp_params.append(param)
             else:
                 model_params.append(param)
-        
+
         model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
-        qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
+        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
 
 
-        model_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        model_optimizer,
-        max_lr=lr,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs,
-        anneal_strategy='linear',
-        pct_start=0.15,
-        final_div_factor=1000,
-    )
+        model_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            model_optimizer,
+            gamma=0.985**(1/len(train_loader))
+        )
 
-        qp_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        qp_optimizer,
-        max_lr=qp_lr,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs,
-        anneal_strategy='linear',
-        pct_start=0.15,
-        final_div_factor=50,
-    )
+        qp_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            qp_optimizer,
+            gamma=0.99**(1/len(train_loader))
+        )
 
         optimizers = [model_optimizer, qp_optimizer]
         schedulers = [model_scheduler, qp_scheduler]
         modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
-        modification_rate = 100
+        modification_rate = 391
 
     else:
 
         optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=lr,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs,
-        anneal_strategy='linear',
-        pct_start=0.15
-    )
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer,
+            gamma=0.985**(1/len(train_loader))
+        )
         schedulers = [scheduler]
         optimizers = [optimizer]
         modify_funcs = None
@@ -182,7 +170,8 @@ def main():
         model_modify_fns=modify_funcs,
         model_modify_iters=modification_rate,
         log_dir=log_dir,
-        checkpoint_dir=checkpoint_dir
+        checkpoint_dir=checkpoint_dir,
+        device=device
     )
     trainer.train()
 

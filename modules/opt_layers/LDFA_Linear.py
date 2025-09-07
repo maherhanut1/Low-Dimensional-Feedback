@@ -47,8 +47,8 @@ class LinearGrad(autograd.Function):
             else:
                 B, _ = grad_output.shape
                 total_len = B
-        
-        E = (P @ Q - weight)
+
+        E = ((P @ Q - weight)) # / torch.norm(grad_weight) #math.sqrt(in_features * out_features)
         if context.needs_input_grad[2]:
             # if in_features * out_features > total_len * (in_features + out_features):
             #     input_Q = torch.matmul(input, Q.t())  # (..., rank)
