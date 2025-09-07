@@ -24,14 +24,24 @@ def replace_linear(module, new_linear_cls, **kwargs):
             replace_linear(child, new_linear_cls, **kwargs)
 
 
+# def ldfa_layers_loss(model):
+#     loss = 0.0
+#     for module in model.modules():
+#         if hasattr(module, "P") and hasattr(module, "Q") and hasattr(module, "weight"):
+#             PQ = module.P @ module.Q
+#             diff = PQ - module.weight.detach()
+#             loss += torch.norm(diff, p='fro') ** 2
+#     return loss
+
 def reinitialize_pq_layers(trainer, r=None):
     """Reinitialize P and Q matrices for all rAFA layers in the model and clear qp_optimizer state"""
     for module in trainer.model.modules():
         if hasattr(module, 'init_svd_approx'):
             module.init_svd_approx()
     # Clear qp_optimizer state (assume it's the second optimizer in the list)
-    if len(trainer.optimizers) > 1:
-        trainer.optimizers[1].state.clear()
+    # if len(trainer.optimizers) > 1:
+    #     trainer.optimizers[0].state.clear()
+    #     trainer.optimizers[1].state.clear()
 
 
 def accuracy_metric(outputs, targets):
@@ -72,7 +82,7 @@ def main():
     num_classes = config.get('num_classes', 10)
     log_name = config.get('log_name', 'default_run')
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = 'cuda' #'cuda' if torch.cuda.is_available() else 'cpu'
     # Data
     train_loader, test_loader = get_data_loaders(dataset, batch_size=batch_size)
 
@@ -102,6 +112,8 @@ def main():
     # Add OneCycleLR scheduler
     steps_per_epoch = len(train_loader)
 
+
+
     # Metrics
     metrics = [accuracy_metric]
 
@@ -120,48 +132,58 @@ def main():
                 qp_params.append(param)
             else:
                 model_params.append(param)
-        
+
         model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
-        qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
+        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, betas=(0.1, 0.99))
 
 
         model_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        model_optimizer,
-        max_lr=lr,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs,
-        anneal_strategy='linear',
-        pct_start=0.15,
-        final_div_factor=1000,
-    )
+            model_optimizer,
+            max_lr=lr,
+            steps_per_epoch=len(train_loader),
+            epochs=num_epochs,
+            pct_start=0.05,
+            anneal_strategy='linear',
+            div_factor=25.0,
+            final_div_factor=1e3,
+        )
 
         qp_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        qp_optimizer,
-        max_lr=qp_lr,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs,
-        anneal_strategy='linear',
-        pct_start=0.15,
-        final_div_factor=50,
-    )
+            qp_optimizer,
+            max_lr=qp_lr,
+            steps_per_epoch=len(train_loader),
+            epochs=num_epochs,
+            pct_start=0.05,
+            anneal_strategy='linear',
+            div_factor=10.0,
+            final_div_factor=1e3,
+        )
 
         optimizers = [model_optimizer, qp_optimizer]
         schedulers = [model_scheduler, qp_scheduler]
         modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
-        modification_rate = 100
+        modification_rate = 391
 
     else:
 
         optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
+        # scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        #     optimizer,
+        #     gamma=0.95**(1/len(train_loader))
+        # )
+        
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=lr,
-        steps_per_epoch=steps_per_epoch,
-        epochs=num_epochs,
-        anneal_strategy='linear',
-        pct_start=0.15
-    )
+            optimizer,
+            max_lr=lr,
+            steps_per_epoch=len(train_loader),
+            epochs=num_epochs,
+            pct_start=0.05,
+            anneal_strategy='linear',
+            div_factor=25.0,
+            final_div_factor=1e3,
+        )
+
         schedulers = [scheduler]
         optimizers = [optimizer]
         modify_funcs = None
@@ -182,7 +204,8 @@ def main():
         model_modify_fns=modify_funcs,
         model_modify_iters=modification_rate,
         log_dir=log_dir,
-        checkpoint_dir=checkpoint_dir
+        checkpoint_dir=checkpoint_dir,
+        device=device
     )
     trainer.train()
 
