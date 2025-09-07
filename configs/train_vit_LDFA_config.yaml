@@ -1,17 +1,17 @@
 # Training configuration for ViT
 # Example: edit these values as needed
-learning_rate: 0.0003
+learning_rate: 0.001
 weight_decay: 0.0001
 batch_size: 128
 num_epochs: 200
 
 use_ldfa_linear: True
-ldfa_rank: 48 
-qp_lr: 0.002
+ldfa_rank: 32
+qp_lr: 0.0005
 qp_weight_decay: 0.0
 
 dataset: cifar10
 model_name: vit_b_16
 image_size: 32
 num_classes: 10
-log_name: default_run_LDFA_rank_48
+log_name: default_run_LDFA_rank_32_onecycle_qrlr_0.01_betas0.1_0.999

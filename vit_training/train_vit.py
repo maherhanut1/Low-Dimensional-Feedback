@@ -24,14 +24,24 @@ def replace_linear(module, new_linear_cls, **kwargs):
             replace_linear(child, new_linear_cls, **kwargs)
 
 
+# def ldfa_layers_loss(model):
+#     loss = 0.0
+#     for module in model.modules():
+#         if hasattr(module, "P") and hasattr(module, "Q") and hasattr(module, "weight"):
+#             PQ = module.P @ module.Q
+#             diff = PQ - module.weight.detach()
+#             loss += torch.norm(diff, p='fro') ** 2
+#     return loss
+
 def reinitialize_pq_layers(trainer, r=None):
     """Reinitialize P and Q matrices for all rAFA layers in the model and clear qp_optimizer state"""
     for module in trainer.model.modules():
         if hasattr(module, 'init_svd_approx'):
             module.init_svd_approx()
     # Clear qp_optimizer state (assume it's the second optimizer in the list)
-    if len(trainer.optimizers) > 1:
-        trainer.optimizers[1].state.clear()
+    # if len(trainer.optimizers) > 1:
+    #     trainer.optimizers[0].state.clear()
+    #     trainer.optimizers[1].state.clear()
 
 
 def accuracy_metric(outputs, targets):
@@ -124,17 +134,29 @@ def main():
                 model_params.append(param)
 
         model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
-        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
+        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, betas=(0.1, 0.99))
 
 
-        model_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        model_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             model_optimizer,
-            gamma=0.985**(1/len(train_loader))
+            max_lr=lr,
+            steps_per_epoch=len(train_loader),
+            epochs=num_epochs,
+            pct_start=0.05,
+            anneal_strategy='linear',
+            div_factor=25.0,
+            final_div_factor=1e3,
         )
 
-        qp_scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        qp_scheduler = torch.optim.lr_scheduler.OneCycleLR(
             qp_optimizer,
-            gamma=0.99**(1/len(train_loader))
+            max_lr=qp_lr,
+            steps_per_epoch=len(train_loader),
+            epochs=num_epochs,
+            pct_start=0.05,
+            anneal_strategy='linear',
+            div_factor=10.0,
+            final_div_factor=1e3,
         )
 
         optimizers = [model_optimizer, qp_optimizer]
@@ -146,10 +168,22 @@ def main():
 
         optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        # scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        #     optimizer,
+        #     gamma=0.95**(1/len(train_loader))
+        # )
+        
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            gamma=0.985**(1/len(train_loader))
+            max_lr=lr,
+            steps_per_epoch=len(train_loader),
+            epochs=num_epochs,
+            pct_start=0.05,
+            anneal_strategy='linear',
+            div_factor=25.0,
+            final_div_factor=1e3,
         )
+
         schedulers = [scheduler]
         optimizers = [optimizer]
         modify_funcs = None
