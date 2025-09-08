@@ -65,6 +65,14 @@ class Trainer:
 						for fn in self.model_modify_fns:
 							fn(self)
 				pbar.set_postfix({'loss': total_loss.item() if hasattr(total_loss, 'item') else total_loss})
+					
+			# for i, module in enumerate(self.model.modules()):
+			# 	if hasattr(module, "P") and hasattr(module, "Q") and hasattr(module, "weight"):
+			# 		U, S, V = torch.svd(module.weight.data)
+			# 		explained_variance = (S[:module.rank]**2).sum() / (S**2).sum()
+			# 		reconstructed_weight = module.P @ module.Q
+			# 		diff = torch.norm(reconstructed_weight - module.weight).item()
+			# 		self.writer.add_scalar(f'weight_reconstruction_error/{module._get_name()}_{i}', explained_variance, epoch)
 			# End of epoch: evaluate and log
 			self.log_tensorboard(epoch)
 			self.save_checkpoint(epoch)

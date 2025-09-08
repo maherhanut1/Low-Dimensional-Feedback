@@ -99,7 +99,7 @@ class Linear(nn.Linear):
             clip_value = self.options.get('clip_value', 10.0)
             for param in self.parameters():
                 if param.requires_grad:
-                    param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value))
+                    param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value) if grad is not None else None)
     
     
     def init_svd_approx(self, niter: int = 10):
@@ -117,8 +117,10 @@ class Linear(nn.Linear):
         # Initialize P and Q such that P @ Q ≈ W
         # P = U * sqrt(S), Q = sqrt(S) * Vt
         sqrt_S = torch.sqrt(S)
-        self.P.data = U * sqrt_S.unsqueeze(0)        # (out_features, rank)
-        self.Q.data = sqrt_S.unsqueeze(1) * Vt      # (rank, in_features)
+
+        with torch.no_grad():
+            self.P.data = U * sqrt_S.unsqueeze(0)        # (out_features, rank)
+            self.Q.data = sqrt_S.unsqueeze(1) * Vt       # (rank, in_features)
 
     def init_parameters(self) -> None:
         fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)

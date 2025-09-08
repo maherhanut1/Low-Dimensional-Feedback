@@ -134,7 +134,7 @@ def main():
                 model_params.append(param)
 
         model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
-        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, betas=(0.1, 0.99))
+        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, betas=(0.1, 0.999))
 
 
         model_scheduler = torch.optim.lr_scheduler.OneCycleLR(
