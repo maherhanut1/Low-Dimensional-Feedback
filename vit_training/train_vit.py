@@ -22,8 +22,10 @@ def replace_linear(module, new_linear_cls, **kwargs):
             out_features = child.out_features
             bias = child.bias is not None
             curr_kwargs = kwargs.copy()
+
             if 'rank' in curr_kwargs and 'qkv' in name:
                 curr_kwargs['rank'] = kwargs['rank'] * 3  # Triple rank for QKV layers
+           
             new_linear = new_linear_cls(in_features, out_features, **curr_kwargs, bias=bias)
             new_linear.weight.data = child.weight.data.clone()
             if bias:
