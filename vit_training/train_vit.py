@@ -10,28 +10,28 @@ from training_utils.trainer import Trainer
 from training_utils.data_loader_factory import get_data_loaders
 import torch.nn as nn
 import torch.optim as optim
-
+from timm.models.tiny_vit import tiny_vit_21m_224, tiny_vit_5m_224
+from timm.models.vision_transformer import vit_base_patch16_224, vit_small_patch16_224, vit_tiny_patch16_224
 
 def replace_linear(module, new_linear_cls, **kwargs):
     for name, child in module.named_children():
+        if name == 'patch_embed':
+            continue  # Special case for ViT classifier head
         if isinstance(child, nn.Linear):
             in_features = child.in_features
             out_features = child.out_features
             bias = child.bias is not None
-            new_linear = new_linear_cls(in_features, out_features, **kwargs, bias=bias)
+            curr_kwargs = kwargs.copy()
+            if 'rank' in curr_kwargs and 'qkv' in name:
+                curr_kwargs['rank'] = kwargs['rank'] * 3  # Triple rank for QKV layers
+            new_linear = new_linear_cls(in_features, out_features, **curr_kwargs, bias=bias)
+            new_linear.weight.data = child.weight.data.clone()
+            if bias:
+                new_linear.bias.data = child.bias.data.clone()
             setattr(module, name, new_linear)
         else:
             replace_linear(child, new_linear_cls, **kwargs)
 
-
-# def ldfa_layers_loss(model):
-#     loss = 0.0
-#     for module in model.modules():
-#         if hasattr(module, "P") and hasattr(module, "Q") and hasattr(module, "weight"):
-#             PQ = module.P @ module.Q
-#             diff = PQ - module.weight.detach()
-#             loss += torch.norm(diff, p='fro') ** 2
-#     return loss
 
 def reinitialize_pq_layers(trainer, r=None):
     """Reinitialize P and Q matrices for all rAFA layers in the model and clear qp_optimizer state"""
@@ -87,18 +87,20 @@ def main():
     train_loader, test_loader = get_data_loaders(dataset, batch_size=batch_size)
 
     # Model
-    model = BPVit(
-        image_size=32,
-        patch_size=4,
-        num_classes=10,
-        dim=384,
-        depth=6,
-        heads=8,
-        mlp_dim=384,
-        dropout=0.1,
-        emb_dropout=0.1,
-    )
+    # model = BPVit(
+    #     image_size=32,
+    #     patch_size=4,
+    #     num_classes=10,
+    #     dim=384,
+    #     depth=6,
+    #     heads=6,
+    #     mlp_dim=384,
+    #     dropout=0.1,
+    #     emb_dropout=0.1,
+    # )
 
+    model = vit_tiny_patch16_224(num_classes=num_classes, img_size=(32, 32), patch_size=4)
+    
     if use_ldfa_linear:
         replace_linear(model, LDFA_Linear, rank=ldfa_rank)
     else:
@@ -109,8 +111,6 @@ def main():
 
     # Loss and optimizer
     loss_fns = [(nn.CrossEntropyLoss(), 1.0)]
-    # Add OneCycleLR scheduler
-    steps_per_epoch = len(train_loader)
 
 
 
@@ -134,29 +134,24 @@ def main():
                 model_params.append(param)
 
         model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
-        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, betas=(0.1, 0.999))
+        qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
 
-
-        model_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(model_optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
+        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=1e-6)
+        model_scheduler = torch.optim.lr_scheduler.SequentialLR(
             model_optimizer,
-            max_lr=lr,
-            steps_per_epoch=len(train_loader),
-            epochs=num_epochs,
-            pct_start=0.05,
-            anneal_strategy='linear',
-            div_factor=25.0,
-            final_div_factor=1e3,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[10 * len(train_loader)]
         )
 
-        qp_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+
+        qp_warmup_scheduler = torch.optim.lr_scheduler.LinearLR(qp_optimizer, start_factor=1/10, end_factor=1.0, total_iters=10 * len(train_loader))
+        qp_main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(qp_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=1e-3)
+
+        qp_scheduler = torch.optim.lr_scheduler.SequentialLR(
             qp_optimizer,
-            max_lr=qp_lr,
-            steps_per_epoch=len(train_loader),
-            epochs=num_epochs,
-            pct_start=0.05,
-            anneal_strategy='linear',
-            div_factor=10.0,
-            final_div_factor=1e3,
+            schedulers=[qp_warmup_scheduler, qp_main_scheduler],
+            milestones=[10 * len(train_loader)]
         )
 
         optimizers = [model_optimizer, qp_optimizer]
@@ -168,20 +163,12 @@ def main():
 
         optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-        # scheduler = torch.optim.lr_scheduler.ExponentialLR(
-        #     optimizer,
-        #     gamma=0.95**(1/len(train_loader))
-        # )
-        
-        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
+        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=1e-6)
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
             optimizer,
-            max_lr=lr,
-            steps_per_epoch=len(train_loader),
-            epochs=num_epochs,
-            pct_start=0.05,
-            anneal_strategy='linear',
-            div_factor=25.0,
-            final_div_factor=1e3,
+            schedulers=[warmup_scheduler, main_scheduler],
+            milestones=[10 * len(train_loader)]
         )
 
         schedulers = [scheduler]

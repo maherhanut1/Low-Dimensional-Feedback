@@ -26,7 +26,6 @@ class LinearGrad(autograd.Function):
         input, weight, P, Q, bias = context.saved_tensors
         grad_input = grad_weight = grad_Q = grad_P = grad_bias = grad_input_intermediate = None
         # Gradient input
-        
         if context.needs_input_grad[0]:
             grad_input_intermediate = grad_output @ (P)
             grad_input = grad_input_intermediate @ (Q)
@@ -38,15 +37,15 @@ class LinearGrad(autograd.Function):
             grad_weight = torch.einsum('...o,...i->oi', grad_output, input)
 
 
-            *_, in_features = input.shape
-            *_, out_features = grad_output.shape
+            # *_, in_features = input.shape
+            # *_, out_features = grad_output.shape
 
-            if grad_output.dim() == 3:
-                B, T, _ = grad_output.shape
-                total_len = B * T
-            else:
-                B, _ = grad_output.shape
-                total_len = B
+            # if grad_output.dim() == 3:
+            #     B, T, _ = grad_output.shape
+            #     total_len = B * T
+            # else:
+            #     B, _ = grad_output.shape
+            #     total_len = B
 
         E = ((P @ Q - weight)) # / torch.norm(grad_weight) #math.sqrt(in_features * out_features)
         if context.needs_input_grad[2]:
