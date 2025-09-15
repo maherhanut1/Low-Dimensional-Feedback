@@ -2,16 +2,16 @@
 # Example: edit these values as needed
 learning_rate: 0.0005
 weight_decay: 0.05
-batch_size: 128
+batch_size: 256
 num_epochs: 200
 
 use_ldfa_linear: True
-ldfa_rank: 32
-qp_lr: 0.01
+ldfa_rank: 16
+qp_lr: 0.002
 qp_weight_decay: 0.0
 
 dataset: cifar10
 model_name: vit_b_16
 image_size: 32
 num_classes: 10
-log_name: vit_cifar10_ldfa_rank32_experiment_timm_tiny_scratch_lr5e4_wd5e2
+log_name: cifar10_custum_lr5e4_wd5e2_bs_256_autoaugment_LDFA_16_qp_2e2

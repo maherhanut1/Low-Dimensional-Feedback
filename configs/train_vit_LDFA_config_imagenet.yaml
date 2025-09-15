@@ -1,0 +1,18 @@
+# Training configuration for ViT
+# Example: edit these values as needed
+learning_rate: 0.001
+weight_decay: 0.05
+batch_size: 512
+num_epochs: 200
+
+
+use_ldfa_linear: True
+ldfa_rank: 16
+qp_lr: 0.01
+qp_weight_decay: 0.0
+
+dataset: imagenet
+model_name: vit_b_16
+image_size: 224
+num_classes: 1000
+log_name: vit_imagenet_experiment_timm_tiny_scratch_LDFA_lr1e3_wd5e2_bs_1024_autoaugment

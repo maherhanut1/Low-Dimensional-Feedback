@@ -7,7 +7,7 @@ from models.BP_ViT import BPVit
 import torch
 from torchvision.models import vit_b_16
 from training_utils.trainer import Trainer
-from training_utils.data_loader_factory import get_data_loaders
+from training_utils.data_loader_factory import get_cifar10_loaders, get_cifar100_loaders, get_imagenet_loaders
 import torch.nn as nn
 import torch.optim as optim
 from timm.models.tiny_vit import tiny_vit_21m_224, tiny_vit_5m_224
@@ -15,7 +15,7 @@ from timm.models.vision_transformer import vit_base_patch16_224, vit_small_patch
 
 def replace_linear(module, new_linear_cls, **kwargs):
     for name, child in module.named_children():
-        if name == 'patch_embed':
+        if 'patch_embed' in name:
             continue  # Special case for ViT classifier head
         if isinstance(child, nn.Linear):
             in_features = child.in_features
@@ -86,22 +86,31 @@ def main():
 
     device = 'cuda' #'cuda' if torch.cuda.is_available() else 'cpu'
     # Data
-    train_loader, test_loader = get_data_loaders(dataset, batch_size=batch_size)
+    if dataset.lower() == 'cifar10':
+        train_loader, test_loader = get_cifar10_loaders(batch_size=batch_size, root='./data', num_workers=12)
+    elif dataset.lower() == 'cifar100':
+        train_loader, test_loader = get_cifar100_loaders(batch_size=batch_size, root='./data')
+    elif dataset.lower() == 'imagenet':
+        # You may want to set the path in your config as 'imagenet_dir'
+        imagenet_dir = config.get('imagenet_dir', '/home/maherhanut/Documents/data/imagenet')
+        train_loader, test_loader = get_imagenet_loaders(data_dir=imagenet_dir, batch_size=batch_size)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset}")
 
     # Model
-    # model = BPVit(
-    #     image_size=32,
-    #     patch_size=4,
-    #     num_classes=10,
-    #     dim=384,
-    #     depth=6,
-    #     heads=6,
-    #     mlp_dim=384,
-    #     dropout=0.1,
-    #     emb_dropout=0.1,
-    # )
+    model = BPVit(
+        image_size=32,
+        patch_size=4,
+        num_classes=10,
+        dim=384,
+        depth=6,
+        heads=6,
+        mlp_dim=384,
+        dropout=0.1,
+        emb_dropout=0.1,
+    )
 
-    model = vit_tiny_patch16_224(num_classes=num_classes, img_size=(32, 32), patch_size=4)
+    # model = vit_tiny_patch16_224(num_classes=10, img_size=(32,32))
     
     if use_ldfa_linear:
         replace_linear(model, LDFA_Linear, rank=ldfa_rank)
@@ -159,7 +168,7 @@ def main():
         optimizers = [model_optimizer, qp_optimizer]
         schedulers = [model_scheduler, qp_scheduler]
         modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
-        modification_rate = 391
+        modification_rate = len(train_loader) // 2  # Reinit every half epoch
 
     else:
 
