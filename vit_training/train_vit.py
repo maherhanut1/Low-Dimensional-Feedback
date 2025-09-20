@@ -103,9 +103,9 @@ def main():
         patch_size=4,
         num_classes=10,
         dim=384,
-        depth=6,
-        heads=6,
-        mlp_dim=384,
+        depth=7,
+        heads=12,
+        mlp_dim=384*2,
         dropout=0.1,
         emb_dropout=0.1,
     )
@@ -157,7 +157,7 @@ def main():
 
 
         qp_warmup_scheduler = torch.optim.lr_scheduler.LinearLR(qp_optimizer, start_factor=1/10, end_factor=1.0, total_iters=10 * len(train_loader))
-        qp_main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(qp_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=1e-3)
+        qp_main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(qp_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=1e-6)
 
         qp_scheduler = torch.optim.lr_scheduler.SequentialLR(
             qp_optimizer,
