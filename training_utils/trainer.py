@@ -74,7 +74,10 @@ class Trainer:
 			# 		self.writer.add_scalar(f'weight_reconstruction_error/{module._get_name()}_{i}', explained_variance, epoch)
 			# End of epoch: evaluate and log
 			self.log_tensorboard(epoch)
-			self.save_checkpoint(epoch)
+			if (epoch + 1) % 10 == 0:
+				self.save_checkpoint(epoch)
+				
+				
 		print(f"Training complete: {self.num_epochs} epochs, {total_iterations} iterations.")
 		# Final evaluation after all epochs
 		self.log_tensorboard(self.num_epochs-1)
