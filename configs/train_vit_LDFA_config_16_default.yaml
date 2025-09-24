@@ -1,6 +1,6 @@
 # Training configuration for ViT
 # Example: edit these values as needed
-learning_rate: 0.001
+learning_rate: 0.0008
 weight_decay: 0.05
 batch_size: 256
 num_epochs: 250

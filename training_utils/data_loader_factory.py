@@ -175,6 +175,7 @@ def get_cifar100_loaders(batch_size=64, root='./data', num_workers=8):
     train_transform = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
+        transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
         transforms.ToTensor(),
         transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
     ])
@@ -201,15 +202,15 @@ def get_coco_segmentation_loaders(batch_size=64, root='./data', coco_annFile_tra
 
 def get_imagenet_loaders(data_dir, batch_size=128, num_workers=8):
     train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(224, scale=(0.08, 1.0)),
+        transforms.RandomResizedCrop(56, scale=(0.08, 1.0)),
         transforms.RandomHorizontalFlip(),
         transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.IMAGENET),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
     val_transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
+        transforms.Resize(64),
+        transforms.CenterCrop(56),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
