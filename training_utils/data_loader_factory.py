@@ -152,92 +152,70 @@ try:
 except ImportError:
     CocoDetection = None
 
-def get_data_loaders(dataset_name: str, batch_size: int = 64, root: str = './data', train_transform=None, test_transform=None, coco_annFile_train=None, coco_annFile_val=None, num_workers: int = 8):
-    """
-    Returns train_loader, test_loader for the specified dataset.
-    dataset_name: 'cifar10', 'cifar100', or 'coco_segmentation'
-    """
-    if dataset_name.lower() == 'cifar10':
-        if train_transform is None:
-            # Option to use CIFAR10Policy
-            use_autoaugment = True
-            if use_autoaugment:
-                train_transform = transforms.Compose([
-                    CIFAR10Policy(),
-                    transforms.RandomCrop(32, padding=4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-                ])
-            else:
-                train_transform = transforms.Compose([
-                    transforms.RandomCrop(32, padding=4),
-                    transforms.RandomHorizontalFlip(),
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-                ])
-        if test_transform is None:
-            test_transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-            ])
-        train_set = datasets.CIFAR10(root=root, train=True, download=True, transform=train_transform)
-        test_set = datasets.CIFAR10(root=root, train=False, download=True, transform=test_transform)
-        train_loader = DataLoader(
-            train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-            pin_memory=True, prefetch_factor=2
-        )
-        test_loader = DataLoader(
-            test_set, batch_size=64, shuffle=False, num_workers=num_workers,
-            pin_memory=True, prefetch_factor=2
-        )
-        return train_loader, test_loader
+def get_cifar10_loaders(batch_size=64, root='./data', num_workers=8):
+    
+    train_transform = transforms.Compose([
+    transforms.RandomCrop(32, padding=4),
+    transforms.RandomHorizontalFlip(),
+    transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
+    transforms.ToTensor(),
+    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+    train_set = datasets.CIFAR10(root=root, train=True, download=True, transform=train_transform)
+    test_set = datasets.CIFAR10(root=root, train=False, download=True, transform=test_transform)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    return train_loader, test_loader
 
-    elif dataset_name.lower() == 'cifar100':
-        if train_transform is None:
-            train_transform = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
-            ])
-        if test_transform is None:
-            test_transform = transforms.Compose([
-                transforms.ToTensor(),
-                transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
-            ])
-        train_set = datasets.CIFAR100(root=root, train=True, download=True, transform=train_transform)
-        test_set = datasets.CIFAR100(root=root, train=False, download=True, transform=test_transform)
-        train_loader = DataLoader(
-            train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-            pin_memory=True, prefetch_factor=2
-        )
-        test_loader = DataLoader(
-            test_set, batch_size=64, shuffle=False, num_workers=num_workers,
-            pin_memory=True, prefetch_factor=2
-        )
-        return train_loader, test_loader
+def get_cifar100_loaders(batch_size=64, root='./data', num_workers=8):
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+    ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+    ])
+    train_set = datasets.CIFAR100(root=root, train=True, download=True, transform=train_transform)
+    test_set = datasets.CIFAR100(root=root, train=False, download=True, transform=test_transform)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    return train_loader, test_loader
 
-    elif dataset_name.lower() == 'coco_segmentation':
-        if CocoDetection is None:
-            raise ImportError('torchvision is not built with COCO support. Please install pycocotools and torchvision with COCO.')
-        if coco_annFile_train is None or coco_annFile_val is None:
-            raise ValueError('For COCO, coco_annFile_train and coco_annFile_val must be provided.')
-        if train_transform is None:
-            train_transform = transforms.ToTensor()
-        if test_transform is None:
-            test_transform = transforms.ToTensor()
-        train_set = CocoDetection(root=root+'/train2017', annFile=coco_annFile_train, transform=train_transform)
-        test_set = CocoDetection(root=root+'/val2017', annFile=coco_annFile_val, transform=test_transform)
-        train_loader = DataLoader(
-            train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-            pin_memory=True, prefetch_factor=2
-        )
-        test_loader = DataLoader(
-            test_set, batch_size=64, shuffle=False, num_workers=num_workers,
-            pin_memory=True, prefetch_factor=2
-        )
-        return train_loader, test_loader
+def get_coco_segmentation_loaders(batch_size=64, root='./data', coco_annFile_train=None, coco_annFile_val=None, num_workers=8):
+    if CocoDetection is None:
+        raise ImportError('torchvision is not built with COCO support. Please install pycocotools and torchvision with COCO.')
+    train_transform = transforms.ToTensor()
+    test_transform = transforms.ToTensor()
+    train_set = CocoDetection(root=root+'/train2017', annFile=coco_annFile_train, transform=train_transform)
+    test_set = CocoDetection(root=root+'/val2017', annFile=coco_annFile_val, transform=test_transform)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    return train_loader, test_loader
 
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
+def get_imagenet_loaders(data_dir, batch_size=128, num_workers=8):
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(56, scale=(0.08, 1.0)),
+        transforms.RandomHorizontalFlip(),
+        transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.IMAGENET),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+    val_transform = transforms.Compose([
+        transforms.Resize(64),
+        transforms.CenterCrop(56),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+    train_dataset = datasets.ImageFolder(root=f"{data_dir}/train", transform=train_transform)
+    val_dataset = datasets.ImageFolder(root=f"{data_dir}/val", transform=val_transform)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    return train_loader, val_loader

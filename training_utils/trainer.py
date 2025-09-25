@@ -70,15 +70,19 @@ class Trainer:
 						for fn in self.model_modify_fns:
 							fn(self)
 				pbar.set_postfix({'loss': total_loss.item() if hasattr(total_loss, 'item') else total_loss})
+			# for i, module in enumerate(self.model.modules()):
+			# 	if hasattr(module, "P") and hasattr(module, "Q") and hasattr(module, "weight"):
+			# 		U, S, V = torch.svd(module.weight.data)
+			# 		explained_variance = (S[:module.rank]**2).sum() / (S**2).sum()
+			# 		reconstructed_weight = module.P @ module.Q
+			# 		diff = torch.norm(reconstructed_weight - module.weight).item()
+			# 		self.writer.add_scalar(f'weight_reconstruction_error/{module._get_name()}_{i}', explained_variance, epoch)
 			# End of epoch: evaluate and log
 			self.log_tensorboard(epoch)
-			self.save_checkpoint(epoch)
-
-			if self.scheduler_per_epoch:
-				for sch in self.schedulers:
-					if hasattr(sch, 'step'):
-						sch.step()
-
+			if (epoch + 1) % 10 == 0:
+				self.save_checkpoint(epoch)
+				
+				
 		print(f"Training complete: {self.num_epochs} epochs, {total_iterations} iterations.")
 		# Final evaluation after all epochs
 		self.log_tensorboard(self.num_epochs-1)
@@ -154,7 +158,16 @@ class Trainer:
 				value, name = metric_fn(self.test_loader, self.model)
 				print(f"Metric [{name}]: {value}")
 
-	@staticmethod
-	def _weight_reset(m):
-		if hasattr(m, 'reset_parameters'):
-			m.reset_parameters()
+
+
+	def log_ldfa_cosine_similarity(self, epoch):
+		for i, (name, module) in enumerate(self.model.named_modules()):
+			if hasattr(module, "Q") and hasattr(module, "P") and hasattr(module, "weight"):
+				QP = module.P @ module.Q
+				W = module.weight
+				# Flatten for cosine similarity
+				QP_flat = QP.view(-1)
+				W_flat = W.view(-1)
+				cos_sim = F.cosine_similarity(QP_flat.unsqueeze(0), W_flat.unsqueeze(0)).item()
+				# Log to TensorBoard
+				self.writer.add_scalar(f"LDFA_CosineSimilarity/layer_{i}/{name}", cos_sim, epoch)

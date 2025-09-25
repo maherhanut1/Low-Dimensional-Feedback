@@ -7,8 +7,13 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 
+import torch
+from torch import nn
+from einops.layers.torch import Rearrange
+from einops import rearrange
+
 class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout = 0.):
+    def __init__(self, dim, hidden_dim, dropout=0.):
         super().__init__()
         self.net = nn.Sequential(
             nn.LayerNorm(dim),
@@ -22,7 +27,7 @@ class FeedForward(nn.Module):
         return self.net(x)
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
         super().__init__()
         inner_dim = dim_head * heads
         project_out = not (heads == 1 and dim_head == dim)
@@ -31,13 +36,12 @@ class Attention(nn.Module):
         self.scale = dim_head ** -0.5
 
         self.norm = nn.LayerNorm(dim)
-        self.attend = nn.Softmax(dim = -1)
+        self.attend = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
 
-        # Use three separate linear layers for q, k, v
-        self.to_q = nn.Linear(dim, inner_dim, bias = False)
-        self.to_k = nn.Linear(dim, inner_dim, bias = False)
-        self.to_v = nn.Linear(dim, inner_dim, bias = False)
+        # --- MODIFICATION ---
+        # Combine Q, K, V projections into a single linear layer for efficiency.
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
 
         self.to_out = nn.Sequential(
             nn.Linear(inner_dim, dim),
@@ -47,13 +51,10 @@ class Attention(nn.Module):
     def forward(self, x):
         x = self.norm(x)
 
-        # Project to q, k, and v separately
-        q = self.to_q(x)
-        k = self.to_k(x)
-        v = self.to_v(x)
-
-        # Rearrange for multi-head attention
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), (q, k, v))
+        # --- MODIFICATION ---
+        # Project to q, k, v all at once and then split.
+        qkv = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv)
 
         dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
         attn = self.attend(dots)
@@ -64,13 +65,13 @@ class Attention(nn.Module):
         return self.to_out(out)
 
 class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
         super().__init__()
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
-                FeedForward(dim, mlp_dim, dropout = dropout)
+                Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout),
+                FeedForward(dim, mlp_dim, dropout=dropout)
             ]))
     def forward(self, x):
         for attn, ff in self.layers:
@@ -79,7 +80,7 @@ class Transformer(nn.Module):
         return x
 
 class BPVit(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0.):
         super().__init__()
         image_height, image_width = image_size, image_size
         patch_height, patch_width = patch_size, patch_size
@@ -90,11 +91,12 @@ class BPVit(nn.Module):
         patch_dim = channels * patch_height * patch_width
         assert pool in {'cls', 'mean'}, 'pool type must be either cls (class token) or mean (mean pooling)'
 
+        # --- MODIFICATION ---
+        # Removed redundant LayerNorm layers. The first block in the transformer
+        # will apply LayerNorm to the patch embeddings.
         self.to_patch_embedding = nn.Sequential(
-            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = patch_height, p2 = patch_width),
-            nn.LayerNorm(patch_dim),
+            Rearrange('b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1=patch_height, p2=patch_width),
             nn.Linear(patch_dim, dim),
-            nn.LayerNorm(dim),
         )
 
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
@@ -111,7 +113,9 @@ class BPVit(nn.Module):
             nn.Linear(dim, num_classes)
         )
 
-    def forward(self, img, gt=None):
+    # --- MODIFICATION ---
+    # Removed unused 'gt' argument from the forward pass signature.
+    def forward(self, img):
         x = self.to_patch_embedding(img)
         b, n, _ = x.shape
 
@@ -124,7 +128,7 @@ class BPVit(nn.Module):
 
         x = self.transformer(x)
 
-        x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
+        x = x.mean(dim=1) if self.pool == 'mean' else x[:, 0]
 
         x = self.to_latent(x)
         return self.mlp_head(x)

@@ -26,7 +26,6 @@ class LinearGrad(autograd.Function):
         input, weight, P, Q, bias = context.saved_tensors
         grad_input = grad_weight = grad_Q = grad_P = grad_bias = grad_input_intermediate = None
         # Gradient input
-        
         if context.needs_input_grad[0]:
             grad_input_intermediate = grad_output @ (P)
             grad_input = grad_input_intermediate @ (Q)
@@ -38,17 +37,17 @@ class LinearGrad(autograd.Function):
             grad_weight = torch.einsum('...o,...i->oi', grad_output, input)
 
 
-            *_, in_features = input.shape
-            *_, out_features = grad_output.shape
+            # *_, in_features = input.shape
+            # *_, out_features = grad_output.shape
 
-            if grad_output.dim() == 3:
-                B, T, _ = grad_output.shape
-                total_len = B * T
-            else:
-                B, _ = grad_output.shape
-                total_len = B
-        
-        E = (P @ Q - weight)
+            # if grad_output.dim() == 3:
+            #     B, T, _ = grad_output.shape
+            #     total_len = B * T
+            # else:
+            #     B, _ = grad_output.shape
+            #     total_len = B
+
+        E = ((P @ Q - weight)) # / torch.norm(grad_weight) #math.sqrt(in_features * out_features)
         if context.needs_input_grad[2]:
             # if in_features * out_features > total_len * (in_features + out_features):
             #     input_Q = torch.matmul(input, Q.t())  # (..., rank)
@@ -99,7 +98,7 @@ class Linear(nn.Linear):
             clip_value = self.options.get('clip_value', 10.0)
             for param in self.parameters():
                 if param.requires_grad:
-                    param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value))
+                    param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value) if grad is not None else None)
     
     
     def init_svd_approx(self, niter: int = 10):
@@ -117,8 +116,10 @@ class Linear(nn.Linear):
         # Initialize P and Q such that P @ Q ≈ W
         # P = U * sqrt(S), Q = sqrt(S) * Vt
         sqrt_S = torch.sqrt(S)
-        self.P.data = U * sqrt_S.unsqueeze(0)        # (out_features, rank)
-        self.Q.data = sqrt_S.unsqueeze(1) * Vt      # (rank, in_features)
+
+        with torch.no_grad():
+            self.P.data = U * sqrt_S.unsqueeze(0)        # (out_features, rank)
+            self.Q.data = sqrt_S.unsqueeze(1) * Vt       # (rank, in_features)
 
     def init_parameters(self) -> None:
         fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)
