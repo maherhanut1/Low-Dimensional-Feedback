@@ -2,32 +2,32 @@
 # Example: edit these values as needed
 
 batch_size: 256
-num_epochs: 250
-
+num_epochs: 300
 learning_rate: 0.0003
 weight_decay: 0.1
-eta_min: 0.00001
+eta_min: 0.00000000001
 
 use_ldfa_linear: True
-ldfa_rank: 16
-qp_lr: 0.01
+ldfa_rank: 32
+qp_lr: 0.005
 qp_weight_decay: 0.0
-qp_eta_min: 0.000001
+qp_eta_min: 0.00000000001
+
 
 #model specificcations
 patch_size: 4
 in_chans: 3
 embed_dim: 384
 depth: 8
-num_heads: 6
+num_heads: 8
 mlp_ratio: 2.0
-qkv_bias: True
+qkv_bias: true
 drop_rate: 0.1
 attn_drop_rate: 0.1
 drop_path_rate: 0.1
 
-dataset: cifar10
-model_name: vit_b_16
+dataset: cifar100
+model_name: vit_s_8_layers_384
 image_size: 32
-num_classes: 10
-log_name: LDFA_16_lr3e3_wd1e1_bs_256_qp_1e2_eta1e5
+num_classes: 100
+log_name: cifar100_lr3e4_wd1e1_bs_256_LDFA_32
