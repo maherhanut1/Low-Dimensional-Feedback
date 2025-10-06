@@ -5,7 +5,7 @@ from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.LDFA_Conv import Conv2d as LDFA_Conv2d
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
 from models.BP_ViT import BPVit
-from models.ConvNet import CIFAR10CNN
+from models.ConvNet import CIFAR10CNNBP
 import torch
 from torchvision.models import vit_b_16
 from training_utils.trainer import Trainer
@@ -31,7 +31,7 @@ def replace_conv2d(module, new_conv_cls, retain_weights=False, **kwargs):
                 dilation=child.dilation,
                 groups=child.groups,
                 bias=child.bias is not None,
-                **kwargs
+                rank = child.out_channels // 2
             )
 
             if retain_weights:
@@ -106,15 +106,12 @@ def main():
     num_epochs = config.get('num_epochs', 150)
     lr = config.get('learning_rate', 3e-4)
     weight_decay = config.get('weight_decay', 1e-4)
-    eta_min = config.get('eta_min', 1e-6)
-    qp_eta_min = config.get('qp_eta_min', 1e-6)
 
     use_ldfa_linear = config.get('use_ldfa_linear', True)
     ldfa_rank = config.get('ldfa_rank', 32)
     qp_lr = config.get('qp_lr', lr)
     qp_weight_decay = config.get('qp_weight_decay', weight_decay)
     model_name = config.get('model_name', 'vit_b_16')
-    image_size = config.get('image_size', 32)
     num_classes = config.get('num_classes', 10)
     log_name = config.get('log_name', 'default_run')
 
@@ -133,13 +130,13 @@ def main():
         raise ValueError(f"Unknown dataset: {dataset}")
 
 
-    model = CIFAR10CNN(num_classes=num_classes)
+    model = CIFAR10CNNBP(num_classes=num_classes)
     
     if use_ldfa_linear:
         replace_conv2d(model, LDFA_Conv2d, retain_weights=True, rank=ldfa_rank)
-    else:
-        replace_conv2d(model, nn.Conv2d, retain_weights=True)
-    model = model.to(device)
+    # # else:
+    # #     replace_conv2d(model, nn.Conv2d, retain_weights=True)
+    # model = model.to(device)
 
     print('*******', use_ldfa_linear, "###########")
 
@@ -168,44 +165,21 @@ def main():
             else:
                 model_params.append(param)
 
-        model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
-        qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
+        model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay, amsgrad=True)
+        qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, amsgrad=True)
+        main_scheduler = torch.optim.lr_scheduler.ExponentialLR(model_optimizer, gamma=0.98)
+        qp_main_scheduler = torch.optim.lr_scheduler.ExponentialLR(qp_optimizer,  gamma=0.98)
 
-        # warmup_scheduler = torch.optim.lr_scheduler.LinearLR(model_optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
-        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optimizer, T_max = (num_epochs) * len(train_loader), eta_min=eta_min)
-        # model_scheduler = torch.optim.lr_scheduler.SequentialLR(
-        #     model_optimizer,
-        #     schedulers=[warmup_scheduler, main_scheduler],
-        #     milestones=[10 * len(train_loader)]
-        # )
-
-        # qp_warmup_scheduler = torch.optim.lr_scheduler.LinearLR(qp_optimizer, start_factor=1/10, end_factor=1.0, total_iters=10 * len(train_loader))
-        qp_main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(qp_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=qp_eta_min)
-
-        # qp_scheduler = torch.optim.lr_scheduler.SequentialLR(
-        #     qp_optimizer,
-        #     schedulers=[qp_warmup_scheduler, qp_main_scheduler],
-        #     milestones=[10 * len(train_loader)]
-        # )
 
         optimizers = [model_optimizer, qp_optimizer]
         schedulers = [main_scheduler, qp_main_scheduler]
-        modification_rate = None
-        modify_funcs = None
-        # modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
-        # modification_rate = len(train_loader) // 2  # Reinit every half epoch
+        modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
+        modification_rate = len(train_loader) // 2  # Reinit every half epoch
 
     else:
 
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-
-        # warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
-        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = (num_epochs) * len(train_loader), eta_min=eta_min)
-        # scheduler = torch.optim.lr_scheduler.SequentialLR(
-        #     optimizer,
-        #     schedulers=[main_scheduler],
-        #     milestones=[10 * len(train_loader)]
-        # )
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, amsgrad=True)
+        main_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
 
         schedulers = [main_scheduler]
         optimizers = [optimizer]
@@ -228,7 +202,8 @@ def main():
         model_modify_iters=modification_rate,
         log_dir=log_dir,
         checkpoint_dir=checkpoint_dir,
-        device=device
+        scheduler_per_epoch=True,
+        device=device,
     )
     trainer.train()
 

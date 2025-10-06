@@ -51,7 +51,7 @@ class Trainer:
 				# Weighted sum of all losses
 				total_loss = 0.0
 				for loss_fn, weight in self.loss_fns:
-					total_loss = total_loss + weight * loss_fn(outputs, targets)
+					total_loss = total_loss + (weight * loss_fn(outputs, targets))
 				for opt in self.optimizers:
 					opt.zero_grad()
 				total_loss.backward()
@@ -78,6 +78,12 @@ class Trainer:
 			# 		diff = torch.norm(reconstructed_weight - module.weight).item()
 			# 		self.writer.add_scalar(f'weight_reconstruction_error/{module._get_name()}_{i}', explained_variance, epoch)
 			# End of epoch: evaluate and log
+   
+			if self.scheduler_per_epoch:
+				for sch in self.schedulers:
+					if hasattr(sch, 'step'):
+						sch.step()
+      
 			self.log_tensorboard(epoch)
 			if (epoch + 1) % 10 == 0:
 				self.save_checkpoint(epoch)

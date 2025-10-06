@@ -85,7 +85,7 @@ class Conv2dGrad(autograd.Function):
             w_flat = weight.view(weight.size(0), -1)
 
             # --- 1. Calculate the error signal E in the flattened space ---
-            E_flat = (p_matrix @ q_matrix - w_flat)
+            E_flat = (p_matrix @ q_matrix - w_flat.detach())
 
             grad_p_flat = E_flat @ q_matrix.t()
             grad_P = grad_p_flat.view_as(P)
