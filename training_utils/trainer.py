@@ -37,11 +37,11 @@ class Trainer:
 		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 	def train(self):
-		self.model.train()
 		total_iterations = 0
 		num_batches = len(self.train_loader)
 		for epoch in range(self.num_epochs):
 			print(f"Epoch {epoch+1}/{self.num_epochs}")
+			self.model.train()
 			pbar = tqdm(enumerate(self.train_loader), total=num_batches, desc=f"Epoch {epoch+1}")
 			for batch_idx, batch in pbar:
 				inputs, targets = batch
