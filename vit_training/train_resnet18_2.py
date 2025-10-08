@@ -14,8 +14,68 @@ import torch.nn as nn
 import torch.optim as optim
 from timm.models.tiny_vit import tiny_vit_21m_224, tiny_vit_5m_224
 from timm.models.vision_transformer import VisionTransformer, vit_base_patch16_224, vit_small_patch16_224, vit_tiny_patch16_224, vit_giant_patch14_224
+from torch.utils.data import DataLoader
+import torchvision
+import torchvision.transforms as transforms
+import numpy as np
+import random
+from sklearn.metrics import accuracy_score
 
-def replace_conv2d(module, new_conv_cls, retain_weights=False, **kwargs):
+mean = [0.4914, 0.4822, 0.4465]
+std = [0.2470, 0.2435, 0.2616]
+
+
+class Cutout(object):
+    def __init__(self, n_holes, length):
+        self.n_holes = n_holes  # Number of regions to cut out
+        self.length = length    # Length of the square region
+
+    def __call__(self, img):
+        h, w = img.size(1), img.size(2)
+
+        mask = np.ones((h, w), np.float32)
+
+        for _ in range(self.n_holes):
+            y = np.random.randint(h)
+            x = np.random.randint(w)
+
+            y1 = np.clip(y - self.length // 2, 0, h)
+            y2 = np.clip(y + self.length // 2, 0, h)
+            x1 = np.clip(x - self.length // 2, 0, w)
+            x2 = np.clip(x + self.length // 2, 0, w)
+
+            mask[y1:y2, x1:x2] = 0.0
+
+        mask = torch.from_numpy(mask)
+        mask = mask.expand_as(img)
+        img = img * mask
+
+        return img
+
+def get_cifar_10_loader(batch_size=32):
+    
+    transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+        Cutout(n_holes=1, length=16),
+    ])
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
+    
+    trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
+    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=8)
+
+    testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+    testloader = DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=8)
+    
+    return trainloader, testloader
+
+
+def replace_conv2d(module, new_conv_cls, ratio, retain_weights=False):
     """
     Recursively replaces all nn.Conv2d layers in a module with a new
     convolutional layer class.
@@ -31,7 +91,7 @@ def replace_conv2d(module, new_conv_cls, retain_weights=False, **kwargs):
                 dilation=child.dilation,
                 groups=child.groups,
                 bias=child.bias is not None,
-                rank = child.out_channels // 2
+                rank = child.out_channels // ratio
             )
 
             if retain_weights:
@@ -43,7 +103,7 @@ def replace_conv2d(module, new_conv_cls, retain_weights=False, **kwargs):
 
             setattr(module, name, new_conv)
         else:
-            replace_conv2d(child, new_conv_cls, retain_weights=retain_weights, **kwargs)
+            replace_conv2d(child, new_conv_cls, retain_weights=retain_weights, ratio=ratio)
 
 
 
@@ -62,10 +122,8 @@ def accuracy_metric(outputs, targets):
     # If outputs is a dict (e.g., {'logits': ...}), extract logits
     if isinstance(outputs, dict) and 'logits' in outputs:
         outputs = outputs['logits']
-    _, predicted = torch.max(outputs, 1)
-    correct = (predicted == targets).sum().item()
-    total = targets.size(0)
-    acc = correct / total if total > 0 else 0.0
+    predicted = torch.argmax(outputs, dim=1)
+    acc = accuracy_score(targets, predicted)
 
     print(f'acc: {acc}')
     return acc, 'accuracy'
@@ -108,7 +166,7 @@ def main():
     weight_decay = config.get('weight_decay', 1e-4)
 
     use_ldfa_linear = config.get('use_ldfa_linear', True)
-    ldfa_rank = config.get('ldfa_rank', 32)
+    rank_ratio = config.get('rank_ratio')
     qp_lr = config.get('qp_lr', lr)
     qp_weight_decay = config.get('qp_weight_decay', weight_decay)
     model_name = config.get('model_name', 'vit_b_16')
@@ -119,7 +177,7 @@ def main():
     device = 'cuda' #'cuda' if torch.cuda.is_available() else 'cpu'
     # Data
     if dataset.lower() == 'cifar10':
-        train_loader, test_loader = get_cifar10_loaders(batch_size=batch_size, root='./data', num_workers=12)
+        train_loader, test_loader = get_cifar_10_loader(batch_size=batch_size) #get_cifar10_loaders(batch_size=batch_size, root='./data', num_workers=12)
     elif dataset.lower() == 'cifar100':
         train_loader, test_loader = get_cifar100_loaders(batch_size=batch_size, root='./data')
     elif dataset.lower() == 'imagenet':
@@ -133,7 +191,7 @@ def main():
     model = CIFAR10CNNBP(num_classes=num_classes)
     
     if use_ldfa_linear:
-        replace_conv2d(model, LDFA_Conv2d, retain_weights=True, rank=ldfa_rank)
+        replace_conv2d(model, LDFA_Conv2d, retain_weights=True, ratio=rank_ratio)
     # # else:
     # #     replace_conv2d(model, nn.Conv2d, retain_weights=True)
     # model = model.to(device)
@@ -145,7 +203,7 @@ def main():
 
     # Metrics
     metrics = [accuracy_metric,
-               lambda x, y: topk_accuracy_metric(x, y, k=5),
+            #    lambda x, y: topk_accuracy_metric(x, y, k=5),
                lambda x, y: topk_accuracy_metric(x, y, k=2)
                ]
 
@@ -165,8 +223,8 @@ def main():
             else:
                 model_params.append(param)
 
-        model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay, amsgrad=True)
-        qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, amsgrad=True)
+        model_optimizer = optim.Adam(model_params, lr=lr, weight_decay=weight_decay)
+        qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
         main_scheduler = torch.optim.lr_scheduler.ExponentialLR(model_optimizer, gamma=0.98)
         qp_main_scheduler = torch.optim.lr_scheduler.ExponentialLR(qp_optimizer,  gamma=0.98)
 
@@ -178,7 +236,7 @@ def main():
 
     else:
 
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay, amsgrad=True)
+        optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
         main_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.98)
 
         schedulers = [main_scheduler]

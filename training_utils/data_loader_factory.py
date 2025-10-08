@@ -151,16 +151,55 @@ try:
     from torchvision.datasets import CocoDetection
 except ImportError:
     CocoDetection = None
+    
+mean = [0.4914, 0.4822, 0.4465]
+std = [0.2470, 0.2435, 0.2616]
+
+
+class Cutout(object):
+    def __init__(self, n_holes, length):
+        self.n_holes = n_holes  # Number of regions to cut out
+        self.length = length    # Length of the square region
+
+    def __call__(self, img):
+        h, w = img.size(1), img.size(2)
+
+        mask = np.ones((h, w), np.float32)
+
+        for _ in range(self.n_holes):
+            y = np.random.randint(h)
+            x = np.random.randint(w)
+
+            y1 = np.clip(y - self.length // 2, 0, h)
+            y2 = np.clip(y + self.length // 2, 0, h)
+            x1 = np.clip(x - self.length // 2, 0, w)
+            x2 = np.clip(x + self.length // 2, 0, w)
+
+            mask[y1:y2, x1:x2] = 0.0
+
+        mask = torch.from_numpy(mask)
+        mask = mask.expand_as(img)
+        img = img * mask
+
+        return img
 
 def get_cifar10_loaders(batch_size=64, root='./data', num_workers=8):
     
+#     train_transform = transforms.Compose([dd
+#     transforms.RandomCrop(32, padding=4),
+#     transforms.RandomHorizontalFlip(),
+#     transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
+#     transforms.ToTensor(),
+#     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+# ])
+
     train_transform = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+        Cutout(n_holes=1, length=16),
+    ])
     test_transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),

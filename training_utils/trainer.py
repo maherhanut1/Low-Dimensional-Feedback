@@ -49,11 +49,12 @@ class Trainer:
 				targets = targets.to(self.device)
 				outputs = self.model(inputs)
 				# Weighted sum of all losses
+				for opt in self.optimizers:
+					opt.zero_grad()
 				total_loss = 0.0
 				for loss_fn, weight in self.loss_fns:
 					total_loss = total_loss + (weight * loss_fn(outputs, targets))
-				for opt in self.optimizers:
-					opt.zero_grad()
+     
 				total_loss.backward()
 				for opt in self.optimizers:
 					opt.step()
@@ -85,7 +86,7 @@ class Trainer:
 						sch.step()
       
 			self.log_tensorboard(epoch)
-			if (epoch + 1) % 10 == 0:
+			if (epoch + 1) % 50 == 0:
 				self.save_checkpoint(epoch)
 				
 				

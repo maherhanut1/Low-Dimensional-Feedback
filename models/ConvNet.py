@@ -51,7 +51,7 @@ class CIFAR10CNNBP(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(512, 256),
             nn.ReLU(inplace=False),
-            nn.Dropout(p=0.2),
+            nn.Dropout(p=0.4),
             nn.Linear(256, num_classes),
         )
 
