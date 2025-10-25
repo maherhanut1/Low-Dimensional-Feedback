@@ -10,8 +10,7 @@ from training_utils.trainer import Trainer
 from training_utils.data_loader_factory import get_cifar10_loaders, get_cifar100_loaders, get_imagenet_loaders
 import torch.nn as nn
 import torch.optim as optim
-from timm.models.tiny_vit import tiny_vit_21m_224, tiny_vit_5m_224
-from timm.models.vision_transformer import VisionTransformer, vit_base_patch16_224, vit_small_patch16_224, vit_tiny_patch16_224, vit_giant_patch14_224
+from timm.models.vision_transformer import VisionTransformer
 
 def replace_linear(module, new_linear_cls, **kwargs):
     for name, child in module.named_children():
