@@ -27,7 +27,7 @@ attn_drop_rate: 0.1
 drop_path_rate: 0.1
 
 dataset: cifar100
-model_name: vit_s_8_layers_384
+model_name: vit_s_8_layers_384_fix
 image_size: 32
 num_classes: 100
 log_name: cifar100_lr3e4_wd1e1_bs_256_LDFA_32

@@ -1,8 +1,19 @@
-model: vit_h_14
-batch_size: 32
-image_size: 224
-num_classes: 1000
-ranks: [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+batch_size: 256
+image_size: 32
+num_classes: 10
+ranks: [4, 8, 16, 32, 64, 128, 256, 384]
 device: cuda
-dtype: float16
-n_iters: 10
+dtype: float32
+n_iters: 20
+
+# VisionTransformer model parameters
+patch_size: 4
+in_chans: 3
+embed_dim: 384
+depth: 8
+num_heads: 8
+mlp_ratio: 2.0
+qkv_bias: true
+drop_rate: 0.1
+attn_drop_rate: 0.1
+drop_path_rate: 0.1

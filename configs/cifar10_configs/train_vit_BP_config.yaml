@@ -23,7 +23,7 @@ attn_drop_rate: 0.1
 drop_path_rate: 0.1
 
 dataset: cifar10
-model_name: vit_b_16
+model_name: vit_b_16_bug_fix
 image_size: 32
 num_classes: 10
 log_name: BP_lr5e4_wd1e1_bs_256

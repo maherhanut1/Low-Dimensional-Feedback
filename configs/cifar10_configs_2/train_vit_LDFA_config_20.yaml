@@ -20,7 +20,7 @@ in_chans: 3
 embed_dim: 384
 depth: 8
 num_heads: 8
-mlp_ratio: 2.0
+mlp_ratio: 2.0 
 qkv_bias: true
 drop_rate: 0.1
 attn_drop_rate: 0.1

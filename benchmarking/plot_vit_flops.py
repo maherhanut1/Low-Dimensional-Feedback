@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import argparse
 import matplotlib.pyplot as plt
-from torchvision.models import vit_b_16, vit_h_14
+from timm.models.vision_transformer import VisionTransformer
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
 import types
@@ -40,56 +40,83 @@ def measure_flops(model, x, y, n_iters=5):
 def main():
 
     import yaml
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, help='Path to YAML config file')
-    parser.add_argument('--model', type=str, default='vit_b_16', choices=['vit_b_16', 'vit_h_14'])
-    parser.add_argument('--batch_size', type=int, default=32)
-    parser.add_argument('--image_size', type=int, default=224)
-    parser.add_argument('--num_classes', type=int, default=1000)
-    parser.add_argument('--ranks', type=int, nargs='+', default=[4, 8, 16, 32, 64, 128, 256, 512])
-    parser.add_argument('--device', type=str, default='cpu')
-    parser.add_argument('--dtype', type=str, default='float32')
-    parser.add_argument('--n_iters', type=int, default=3)
+    import os
+    
+    parser = argparse.ArgumentParser(description='Benchmark ViT FLOPs with LDFA')
+    parser.add_argument('--config', type=str, required=True, help='Path to YAML config file')
     args = parser.parse_args()
+    
+    config_path = args.config
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
 
-    # If config is provided, override args with YAML
-    if args.config:
-        with open(args.config, 'r') as f:
-            config = yaml.safe_load(f)
-        for key, value in config.items():
-            setattr(args, key, value)
+    # Load parameters from config
+    batch_size = config.get('batch_size', 32)
+    image_size = config.get('image_size', 32)
+    num_classes = config.get('num_classes', 10)
+    ranks = config.get('ranks', [4, 8, 16, 32, 64, 128, 256, 384])
+    device = config.get('device', 'cpu')
+    dtype_str = config.get('dtype', 'float32')
+    n_iters = config.get('n_iters', 10)
+    
+    # Load model parameters
+    patch_size = config.get('patch_size', 4)
+    in_chans = config.get('in_chans', 3)
+    embed_dim = config.get('embed_dim', 384)
+    depth = config.get('depth', 8)
+    num_heads = config.get('num_heads', 8)
+    mlp_ratio = config.get('mlp_ratio', 2.0)
+    qkv_bias = config.get('qkv_bias', True)
+    drop_rate = config.get('drop_rate', 0.1)
+    attn_drop_rate = config.get('attn_drop_rate', 0.1)
+    drop_path_rate = config.get('drop_path_rate', 0.1)
 
-    dtype = torch.float32 if args.dtype == 'float32' else torch.float16
-    device = args.device
-    n_iters = args.n_iters
-
-    # Load model
-    if args.model == 'vit_b_16':
-        model_fn = vit_b_16
-    elif args.model == 'vit_h_14':
-        model_fn = vit_h_14
-    else:
-        raise ValueError('Unknown model')
+    dtype = torch.float32 if dtype_str == 'float32' else torch.float16
 
     # Baseline (BP_Linear)
-    model_bp = model_fn(num_classes=args.num_classes)
+    model_bp = VisionTransformer(img_size=image_size,
+                              patch_size=patch_size,
+                              in_chans=in_chans,
+                              num_classes=num_classes,
+                              embed_dim=embed_dim,
+                              depth=depth,
+                              num_heads=num_heads,
+                              mlp_ratio=mlp_ratio,
+                              qkv_bias=qkv_bias,
+                              drop_rate=drop_rate,
+                              attn_drop_rate=attn_drop_rate,
+                              drop_path_rate=drop_path_rate)
+    
     replace_linear(model_bp, BP_Linear)
     model_bp = model_bp.to(device=device, dtype=dtype)
-    x = torch.randn(args.batch_size, 3, args.image_size, args.image_size, device=device, dtype=dtype, requires_grad=True)
-    y = torch.randn(args.batch_size, args.num_classes, device=device, dtype=dtype)
-    print(f"Measuring BP_Linear for {args.model}...")
+    x = torch.randn(batch_size, 3, image_size, image_size, device=device, dtype=dtype, requires_grad=True)
+    y = torch.randn(batch_size, num_classes, device=device, dtype=dtype)
+    print(f"Measuring BP_Linear...")
     fwd_bp, bwd_bp = measure_flops(model_bp, x, y, n_iters=n_iters)
     print(f"BP_Linear: Forward {fwd_bp/1e9:.2f} GFLOPs, Backward {bwd_bp/1e9:.2f} GFLOPs")
 
     # LDFA_Linear for different r
-    r_list = args.ranks
+    r_list = ranks
     fwd_ldfa_list = []
     bwd_ldfa_list = []
     for r in r_list:
-        model_ldfa = model_fn(num_classes=args.num_classes)
+        model_ldfa = VisionTransformer(img_size=image_size,
+                              patch_size=patch_size,
+                              in_chans=in_chans,
+                              num_classes=num_classes,
+                              embed_dim=embed_dim,
+                              depth=depth,
+                              num_heads=num_heads,
+                              mlp_ratio=mlp_ratio,
+                              qkv_bias=qkv_bias,
+                              drop_rate=drop_rate,
+                              attn_drop_rate=attn_drop_rate,
+                              drop_path_rate=drop_path_rate)
         replace_linear(model_ldfa, LDFA_Linear, rank=r)
         model_ldfa = model_ldfa.to(device=device, dtype=dtype)
-        print(f"Measuring LDFA_Linear for {args.model} (rank={r})...")
+        print(f"Measuring LDFA_Linear (rank={r})...")
         fwd_ldfa, bwd_ldfa = measure_flops(model_ldfa, x, y, n_iters=n_iters)
         fwd_ldfa_list.append(fwd_ldfa)
         bwd_ldfa_list.append(bwd_ldfa)
@@ -104,22 +131,23 @@ def main():
     plt.plot(r_list, [f/1e9 for f in bwd_ldfa_list], marker='s', label='LDFA_Linear Backward')
     plt.xlabel('Rank (r)')
     plt.ylabel('Average Backward FLOPs (GFLOPs)')
-    plt.title(f'Backward FLOPs vs Rank for {args.model}')
+    plt.title('Backward FLOPs vs Rank for VisionTransformer')
     plt.legend()
     plt.grid(True)
 
     # Bar plot for backward savings
     plt.subplot(1, 2, 2)
-    savings = [bwd_bp / f if f > 0 else 0 for f in bwd_ldfa_list]
+    savings = [f / bwd_bp if bwd_bp > 0 else 0 for f in bwd_ldfa_list]
     plt.bar([str(r) for r in r_list], savings, color='skyblue')
     plt.axhline(1, color='r', linestyle='--', label='BP_Linear (baseline)')
     plt.xlabel('Rank (r)')
-    plt.ylabel('Backward FLOPs Savings (x times less)')
-    plt.title('LDFA Backward FLOPs Savings vs BP_Linear')
+    plt.ylabel('Backward FLOPs Ratio (relative to BP)')
+    plt.title('LDFA Backward FLOPs Ratio vs BP_Linear')
     for i, val in enumerate(savings):
         plt.text(i, val, f"{val:.2f}x", ha='center', va='bottom', fontsize=8)
     plt.legend()
     plt.tight_layout()
+    plt.savefig('vit_flops_benchmark.svg')
     plt.show()
 
 if __name__ == '__main__':
