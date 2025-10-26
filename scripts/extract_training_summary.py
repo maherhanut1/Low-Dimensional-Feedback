@@ -12,7 +12,8 @@ import argparse
 
 def is_ldfa_task(task_name):
     """Check if task is an LDFA task"""
-    pattern = r'^[Ll][Dd][Ff][Aa]_(\d+)_'
+    # Search anywhere in the task name, not just at the start
+    pattern = r'[Ll][Dd][Ff][Aa]_(\d+)'
     return bool(re.search(pattern, task_name))
 
 
