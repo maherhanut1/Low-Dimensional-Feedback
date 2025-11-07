@@ -26,25 +26,27 @@ class LinearGrad(autograd.Function):
         input, weight, P, Q, bias = context.saved_tensors
         grad_input = grad_weight = grad_Q = grad_P = grad_bias = grad_input_intermediate = None
         # Gradient input
-        
         if context.needs_input_grad[0]:
             grad_input_intermediate = grad_output @ (P)
             grad_input = grad_input_intermediate @ (Q)
-        
+         
         if context.needs_input_grad[1]:
-            # grad_output = grad_output.reshape(-1, grad_output.shape[-1])
-            # input = input.view(-1, input.shape[-1])
-            # grad_weight = grad_output.t() @ (input)
-            grad_weight = torch.einsum('...o,...i->oi', grad_output, input)
-        
+            grad_output = grad_output.reshape(-1, grad_output.shape[-1])
+            input = input.view(-1, input.shape[-1])
+            grad_weight = grad_output.t() @ (input)
+
         if context.needs_input_grad[2]:
-            # grad_P = grad_output.t() @ (input @ Q.t())
-            grad_P = grad_weight @ Q.t() #TODO ADD IF STATEMENT TO USE THE MORE EFFICIENT ONE DEPENDING ON DIMENSIONS
-              
-        if grad_input_intermediate is not None and context.needs_input_grad[3]:
-            # grad_Q = grad_input_intermediate.view(-1, grad_input_intermediate.shape[-1]).t() @ (input)
-            grad_Q = P.t() @ grad_weight
+            
+            yp = grad_input_intermediate.reshape(-1, grad_input_intermediate.shape[-1]) #(normalized_grad_output) @ (P)
+            pyp = P @ yp.T
+            b = pyp @ yp
+            a = grad_output.T @ yp
+            grad_P = (b - a)
         
+        if grad_input_intermediate is not None and context.needs_input_grad[3]:
+            grad_Q = grad_input_intermediate.view(-1, grad_input_intermediate.shape[-1]).t() @ (input)
+            # grad_Q = Q * 0
+
         # Gradient bias
         if bias is not None and context.needs_input_grad[4]:
             grad_bias = grad_output.sum(0).squeeze(0)
@@ -54,21 +56,21 @@ class LinearGrad(autograd.Function):
 
 
 class Linear(nn.Linear):
-    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True, requires_gt = False) -> None:
+    def __init__(self, in_features: int, out_features: int, rank: int, bias: bool = True, layer_config: dict = None, update_P = True, update_Q = True) -> None:
+        self.layer_config = layer_config or {}
         super(Linear, self).__init__(in_features, out_features, bias)
 
         if "options" not in self.layer_config:
             self.layer_config["options"] = {
                 "gradient_clip": True,
                 "init": "kaiming",
-                "svd_niter": 2,
+                "svd_niter": 10,
                 "clip_value": 10.0
             }
-            
         self.options = self.layer_config["options"]
         self.init = self.options["init"]
-        self.rank = rank
-        self.svd_niter = self.layer_config.get("svd_niter", 2) 
+        self.rank = min(rank, in_features, out_features)
+        self.svd_niter = self.layer_config.get("svd_niter", 10)
         self.Q = nn.Parameter(torch.Tensor(self.rank, in_features), requires_grad=update_Q)
         self.P = nn.Parameter(torch.Tensor(out_features, self.rank), requires_grad=update_P)
         
@@ -82,16 +84,16 @@ class Linear(nn.Linear):
             clip_value = self.options.get('clip_value', 10.0)
             for param in self.parameters():
                 if param.requires_grad:
-                    param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value))
+                    param.register_hook(lambda grad: torch.clamp(grad, -clip_value, clip_value) if grad is not None else None)
     
     
-    def init_svd_approx(self, niter: int = 2):
+    def init_svd_approx(self, niter: int = 10):
         """
         Initialize P and Q using a **randomized** SVD to approximate the weight matrix W.
         This is much more efficient than a full SVD for large matrices.
         """
 
-        U, S, V = torch.svd_lowrank(self.weight.data, q=self.rank, niter=2)
+        U, S, V = torch.svd_lowrank(self.weight.data, q=self.rank, niter=self.svd_niter)
         
         # Note: torch.svd_lowrank returns V, not V.T as torch.linalg.svd does.
         # V has shape (in_features, rank), so we need its transpose.
@@ -100,8 +102,10 @@ class Linear(nn.Linear):
         # Initialize P and Q such that P @ Q ≈ W
         # P = U * sqrt(S), Q = sqrt(S) * Vt
         sqrt_S = torch.sqrt(S)
-        self.P.data = U * sqrt_S.unsqueeze(0)        # (out_features, rank)
-        self.Q.data = sqrt_S.unsqueeze(1) * Vt      # (rank, in_features)
+
+        with torch.no_grad():
+            self.P.data = U * sqrt_S.unsqueeze(0)        # (out_features, rank)
+            self.Q.data = sqrt_S.unsqueeze(1) * Vt       # (rank, in_features)
 
     def init_parameters(self) -> None:
         fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)

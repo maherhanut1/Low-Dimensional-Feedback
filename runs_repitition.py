@@ -29,7 +29,7 @@ def run_config_multiple_times(config_path, num_runs=5):
             
             # Run the training script
             result = subprocess.run([
-                'python', 'vit_training/train_vit.py',
+                'python', 'vit_training/train_vit_bio.py',
                 '--config', temp_config_path
             ])
             
