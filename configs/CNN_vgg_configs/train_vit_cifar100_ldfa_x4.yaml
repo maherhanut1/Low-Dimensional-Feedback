@@ -1,14 +1,14 @@
 # Training configuration for ViT
 # Example: edit these values as needed
 
-batch_size: 32
+batch_size: 64
 num_epochs: 250
 learning_rate: 0.0005
 weight_decay: 0.00005
 
 use_ldfa_linear: True
 # ldfa_rank: 64
-qp_lr: 0.01
+qp_lr: 0.02
 qp_weight_decay: 0.0
 rank_ratio: 4
 # # qp_eta_min: 0.000000001
@@ -16,4 +16,4 @@ rank_ratio: 4
 dataset: cifar10
 model_name: CNNvgg16
 num_classes: 10
-log_name: cifar10_lr5e4_wd5e5_adam_ldfa_x4_gamme_0.98
+log_name: cifar10_lr5e4_wd5e5_adam_ldfa_x4_gamme_0.98_qplr_0.02
