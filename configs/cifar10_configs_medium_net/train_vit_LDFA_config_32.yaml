@@ -1,0 +1,33 @@
+# Training configuration for ViT
+# Example: edit these values as needed
+
+batch_size: 256
+num_epochs: 250
+learning_rate: 0.0003
+weight_decay: 0.1
+eta_min: 0.000000001
+
+use_ldfa_linear: True
+ldfa_rank: 32
+qp_lr: 0.015
+qp_weight_decay: 0.0
+qp_eta_min: 0.000000001
+
+
+#model specificcations
+patch_size: 4
+in_chans: 3
+embed_dim: 192
+depth: 8
+num_heads: 8
+mlp_ratio: 2.0
+qkv_bias: true
+drop_rate: 0.1
+attn_drop_rate: 0.1
+drop_path_rate: 0.1
+
+dataset: cifar10
+model_name: vit_b_16_192
+image_size: 32
+num_classes: 10
+log_name: LDFA_32_lr5e4_wd1e1_bs_256_medium_net_qp_15e2
