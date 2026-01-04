@@ -144,13 +144,57 @@ class CIFAR10Policy(object):
         return "AutoAugment CIFAR10 Policy"
 import torch
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 # For COCO segmentation
 try:
     from torchvision.datasets import CocoDetection
 except ImportError:
     CocoDetection = None
+
+
+def get_deterministic_class_subset(num_classes_total, num_subset_classes):
+    """
+    Get a deterministic subset of classes - simply the first n classes.
+    This ensures the same subset is used across all experiments and avoids label remapping.
+    
+    Args:
+        num_classes_total: Total number of classes (e.g., 100 for CIFAR-100)
+        num_subset_classes: Number of classes to select (e.g., 10, 20, 50)
+    
+    Returns:
+        List of selected class indices (0 to num_subset_classes-1)
+    """
+    if num_subset_classes >= num_classes_total:
+        return list(range(num_classes_total))
+    
+    # Simply use the first n classes
+    return list(range(num_subset_classes))
+
+
+def filter_dataset_by_classes(dataset, selected_classes):
+    """
+    Filter a dataset to only include samples from selected classes.
+    Since we use the first n classes, labels are already in [0, n-1] range - no remapping needed.
+    
+    Args:
+        dataset: PyTorch dataset with targets attribute
+        selected_classes: List of class indices to keep (should be [0, 1, 2, ..., n-1])
+    
+    Returns:
+        Subset of the dataset with filtered samples
+    """
+    # Find indices of samples with selected classes
+    if hasattr(dataset, 'targets'):
+        targets = np.array(dataset.targets)
+    else:
+        targets = np.array([dataset[i][1] for i in range(len(dataset))])
+    
+    indices = [i for i, label in enumerate(targets) if label in selected_classes]
+    
+    # Create and return subset - no label remapping needed since we use first n classes
+    return Subset(dataset, indices)
+
 
 def get_cifar10_loaders(batch_size=64, root='./data', num_workers=8):
     
@@ -171,7 +215,20 @@ def get_cifar10_loaders(batch_size=64, root='./data', num_workers=8):
     test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
     return train_loader, test_loader
 
-def get_cifar100_loaders(batch_size=64, root='./data', num_workers=8):
+def get_cifar100_loaders(batch_size=64, root='./data', num_workers=8, num_subset_classes=None):
+    """
+    Get CIFAR-100 data loaders, optionally with a subset of classes.
+    
+    Args:
+        batch_size: Batch size for training
+        root: Root directory for data
+        num_workers: Number of workers for data loading
+        num_subset_classes: If specified, uses only this many classes (e.g., 10, 20, 50).
+                           Uses the same deterministic subset across experiments.
+    
+    Returns:
+        train_loader, test_loader
+    """
     train_transform = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
         transforms.RandomHorizontalFlip(),
@@ -185,6 +242,14 @@ def get_cifar100_loaders(batch_size=64, root='./data', num_workers=8):
     ])
     train_set = datasets.CIFAR100(root=root, train=True, download=True, transform=train_transform)
     test_set = datasets.CIFAR100(root=root, train=False, download=True, transform=test_transform)
+    
+    # Apply class subset filtering if specified
+    if num_subset_classes is not None and num_subset_classes < 100:
+        selected_classes = get_deterministic_class_subset(100, num_subset_classes)
+        print(f"Using subset of {num_subset_classes} classes from CIFAR-100: {selected_classes}")
+        train_set = filter_dataset_by_classes(train_set, selected_classes)
+        test_set = filter_dataset_by_classes(test_set, selected_classes)
+    
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
     test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
     return train_loader, test_loader

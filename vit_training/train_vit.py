@@ -105,6 +105,7 @@ def main():
     model_name = config.get('model_name', 'vit_b_16')
     image_size = config.get('image_size', 32)
     num_classes = config.get('num_classes', 10)
+    num_subset_classes = config.get('num_subset_classes', None)  # For CIFAR-100 subset
     log_name = config.get('log_name', 'default_run')
 
     #load model parameters
@@ -120,11 +121,17 @@ def main():
     drop_path_rate = config.get('drop_path_rate')
 
     device = 'cuda' #'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    # Update num_classes if using CIFAR-100 subset BEFORE creating data loaders and model
+    if dataset.lower() == 'cifar100' and num_subset_classes is not None and num_subset_classes < 100:
+        print(f"Overriding num_classes from {num_classes} to {num_subset_classes} for CIFAR-100 subset")
+        num_classes = num_subset_classes
+    
     # Data
     if dataset.lower() == 'cifar10':
         train_loader, test_loader = get_cifar10_loaders(batch_size=batch_size, root='./data', num_workers=12)
     elif dataset.lower() == 'cifar100':
-        train_loader, test_loader = get_cifar100_loaders(batch_size=batch_size, root='./data')
+        train_loader, test_loader = get_cifar100_loaders(batch_size=batch_size, root='./data', num_subset_classes=num_subset_classes)
     elif dataset.lower() == 'imagenet':
         # You may want to set the path in your config as 'imagenet_dir'
         imagenet_dir = config.get('imagenet_dir', '/home/maherhanut/Documents/data/imagenet')

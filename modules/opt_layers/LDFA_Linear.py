@@ -48,18 +48,19 @@ class LinearGrad(autograd.Function):
             #     total_len = B
 
         E = ((P @ Q - weight)) # / torch.norm(grad_weight) #math.sqrt(in_features * out_features)
+        r = P.shape[-1]
         if context.needs_input_grad[2]:
             # if in_features * out_features > total_len * (in_features + out_features):
             #     input_Q = torch.matmul(input, Q.t())  # (..., rank)
             #     grad_P = torch.einsum('...o,...r->or', grad_output, input_Q)
             # else:
-            grad_P = E @ Q.t()
+            grad_P = E @ Q.t() / math.sqrt(r)
               
         if grad_input_intermediate is not None and context.needs_input_grad[3]:
             # if total_len < in_features:
             #     grad_Q = torch.einsum('...r,...i->ri', grad_input_intermediate, input)
             # else:
-            grad_Q = P.t() @ E
+            grad_Q = P.t() @ E / math.sqrt(r)
         
         # Gradient bias
         if bias is not None and context.needs_input_grad[4]:
