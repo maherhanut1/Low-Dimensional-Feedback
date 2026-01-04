@@ -1,0 +1,40 @@
+# Example config for training on CIFAR-100 subset
+# This will train on only 10 classes from CIFAR-100
+# The same 10 classes will be used across all experiments (deterministic selection)
+
+dataset: cifar100
+batch_size: 256
+num_epochs: 250
+learning_rate: 5e-4
+weight_decay: 1e-1
+eta_min: 1e-6
+qp_eta_min: 1e-6
+
+# Model parameters
+model_name: vit_b_16
+image_size: 32
+num_classes: 100  # This will be overridden to match num_subset_classes if specified
+patch_size: 4
+in_chans: 3
+embed_dim: 384
+depth: 12
+num_heads: 6
+mlp_ratio: 4
+qkv_bias: True
+drop_rate: 0.0
+attn_drop_rate: 0.0
+drop_path_rate: 0.1
+
+# CIFAR-100 subset parameter
+# Set to None or omit to use all 100 classes
+# Set to 10, 20, 50, etc. to use a deterministic subset of that many classes
+num_subset_classes: 10  # Use only 10 classes from CIFAR-100
+
+# Training method
+use_ldfa_linear: false  # Set to true for LDFA, false for BP
+ldfa_rank: 32
+qp_lr: 1.5e-2
+qp_weight_decay: 1e-1
+
+# Logging
+log_name: BP_lr5e4_wd1e1_bs_256_10classes_exp_1
