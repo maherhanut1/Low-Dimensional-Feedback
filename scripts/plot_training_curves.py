@@ -25,7 +25,7 @@ def extract_rank_from_task(task_name):
 def is_bp_task(task_name):
     """Check if task is a BP (backpropagation) task"""
     # Check if BP appears anywhere in the task name
-    return bool(re.search(r'_BP_|_BP$', task_name, re.IGNORECASE))
+    return bool(re.search(r'^BP_|_BP_|_BP$', task_name, re.IGNORECASE))
 
 
 def is_ldfa_task(task_name):
@@ -197,14 +197,14 @@ def plot_training_curves(experiments, metrics, save_dir='experiment_plots'):
         # Sort LDFA tasks by rank
         ldfa_tasks.sort(key=lambda x: x[1]['rank'])
         
-        # Generate colors for LDFA tasks (lighter for smaller ranks, darker for larger)
+        # Generate colors for LDFA tasks (darker for smaller ranks, lighter for larger)
         # Use wider range for more contrast
         if ldfa_tasks:
             blues = plt.cm.Blues(np.linspace(0.35, 0.85, len(ldfa_tasks)))
-            # Reverse so smaller ranks are lighter
+            # Don't reverse - smaller ranks get darker colors
             colors_map = {}
             for i, (task_name, task_info) in enumerate(ldfa_tasks):
-                colors_map[task_name] = blues[-(i+1)]
+                colors_map[task_name] = blues[i]
         
         # Plot LDFA tasks
         for task_name, task_info in ldfa_tasks:
@@ -254,6 +254,8 @@ def plot_training_curves(experiments, metrics, save_dir='experiment_plots'):
         for task_name, task_info in bp_tasks:
             exp_data_list = task_info['data']
             
+            print(f"  Plotting BP task: {task_name} with {len(exp_data_list)} experiments")
+            
             # Collect steps and values for all experiments
             steps_list = []
             values_list = []
@@ -263,6 +265,8 @@ def plot_training_curves(experiments, metrics, save_dir='experiment_plots'):
                     steps_list.append(np.array(exp_data[metric]['steps']))
                     values_list.append(np.array(exp_data[metric]['values']))
             
+            print(f"  BP has {len(steps_list)} valid experiments for {metric}")
+            
             if not steps_list:
                 continue
             
@@ -270,26 +274,54 @@ def plot_training_curves(experiments, metrics, save_dir='experiment_plots'):
             common_steps, interpolated_values = interpolate_to_common_steps(steps_list, values_list)
             
             if len(interpolated_values) == 0:
+                print(f"  WARNING: No interpolated values for BP!")
                 continue
             
             mean_values = np.mean(interpolated_values, axis=0)
             std_values = np.std(interpolated_values, axis=0)
             
+            print(f"  BP mean value range: {np.min(mean_values):.4f} to {np.max(mean_values):.4f}")
+            
             # Plot mean line with shaded std
             ax.plot(common_steps, mean_values, 
-                   linewidth=2.5, color='black', linestyle='-',
-                   label=f'BP (n={len(exp_data_list)})')
+                   linewidth=3.5, color='black', linestyle='-',
+                   label=f'BP (n={len(exp_data_list)})', zorder=10)
             ax.fill_between(common_steps, 
                            mean_values - std_values, 
                            mean_values + std_values,
-                           alpha=0.2, color='gray')
+                           alpha=0.2, color='gray', zorder=10)
         
         # Formatting
         ax.set_xlabel('Training Step', fontsize=14, fontweight='bold')
         ax.set_ylabel(info['ylabel'], fontsize=14, fontweight='bold')
         ax.set_title(info['title'], fontsize=16, fontweight='bold')
         ax.tick_params(labelsize=12)
-        ax.legend(fontsize=11, loc='best')
+        
+        # Create colorbar for LDFA ranks instead of legend
+        if ldfa_tasks:
+            # Get min and max ranks
+            ranks = [task_info['rank'] for _, task_info in ldfa_tasks]
+            min_rank = min(ranks)
+            max_rank = max(ranks)
+            
+            # Create a ScalarMappable for the colorbar
+            from matplotlib.cm import ScalarMappable
+            from matplotlib.colors import Normalize
+            
+            norm = Normalize(vmin=min_rank, vmax=max_rank)
+            sm = ScalarMappable(cmap=plt.cm.Blues, norm=norm)
+            sm.set_array([])
+            
+            # Add colorbar
+            cbar = plt.colorbar(sm, ax=ax, pad=0.02, aspect=30)
+            cbar.set_label('LDFA Rank', fontsize=12, fontweight='bold', rotation=270, labelpad=20)
+            cbar.ax.tick_params(labelsize=11)
+            
+            # Add BP to the title or as text annotation
+            if bp_tasks:
+                ax.text(0.02, 0.98, 'BP (black line)', transform=ax.transAxes,
+                       fontsize=11, fontweight='bold', verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         
         plt.tight_layout()
         

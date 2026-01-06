@@ -23,7 +23,7 @@ def extract_rank_from_task(task_name):
 def is_bp_task(task_name):
     """Check if task is a BP (backpropagation) task"""
     # Check if BP appears anywhere in the task name
-    return bool(re.search(r'_BP_|_BP$', task_name, re.IGNORECASE))
+    return bool(re.search(r'^BP_|_BP_|_BP$', task_name, re.IGNORECASE))
 
 
 def plot_convergence_comparison(csv_file, save_dir='experiment_plots'):
