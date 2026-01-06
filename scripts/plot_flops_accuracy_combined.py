@@ -147,15 +147,20 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     # FLOPs to convergence = epochs_to_90% * FLOPs_per_epoch
     flops_to_convergence = {}
     steps_to_convergence = {}
+    steps_to_convergence_std = {}
     accuracies_top1 = {}
+    accuracies_top1_std = {}
     accuracies_top2 = {}
+    accuracies_top2_std = {}
     
     for _, row in convergence_df.iterrows():
         rank_raw = row['Rank']
         # Convert rank to int if it's a digit, otherwise keep as string (for 'BP')
         rank = int(rank_raw) if str(rank_raw).isdigit() else rank_raw
         epochs = row['Mean_Steps_to_90pct']  # These are actually epochs, not batches
+        epochs_std = row.get('Std_Steps_to_90pct', 0.0)  # Get std if available
         steps_to_convergence[rank] = epochs
+        steps_to_convergence_std[rank] = epochs_std
         
         # Get corresponding accuracy - ranks in accuracy CSV are strings ('10.0', 'BP', etc.)
         if isinstance(rank, int):
@@ -173,7 +178,9 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
             
         acc_row = acc_matches.iloc[0]
         accuracies_top1[rank] = acc_row['Mean_Top1_Acc']
+        accuracies_top1_std[rank] = acc_row.get('Std_Top1_Acc', 0.0)  # Get std if available
         accuracies_top2[rank] = acc_row['Mean_Top2_Acc']
+        accuracies_top2_std[rank] = acc_row.get('Std_Top2_Acc', 0.0)  # Get std if available
         
         # Calculate FLOPs to convergence (in TFLOPs)
         # Total FLOPs = epochs × batches_per_epoch × FLOPs_per_batch
@@ -187,7 +194,9 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     ranks_sorted = ['BP'] + sorted([r for r in ldfa_ranks if isinstance(r, int)], reverse=True)
     flops_values = [flops_to_convergence[r] for r in ranks_sorted]
     acc_top1_values = [accuracies_top1[r] for r in ranks_sorted]
+    acc_top1_std_values = [accuracies_top1_std[r] for r in ranks_sorted]
     acc_top2_values = [accuracies_top2[r] for r in ranks_sorted]
+    acc_top2_std_values = [accuracies_top2_std[r] for r in ranks_sorted]
     rank_labels = [str(r) for r in ranks_sorted]
     
     # Calculate FLOPs reduction percentage (relative to BP)
@@ -206,10 +215,13 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
         flops_summary_data.append({
             'Rank': rank,
             'Mean_Accuracy_Top1': f"{acc_top1_values[i]:.4f}",
+            'Std_Accuracy_Top1': f"{accuracies_top1_std[rank]:.4f}",
             'Mean_Accuracy_Top2': f"{acc_top2_values[i]:.4f}",
+            'Std_Accuracy_Top2': f"{accuracies_top2_std[rank]:.4f}",
+            'Mean_Epochs_to_90pct': f"{steps_to_convergence[rank]:.1f}",
+            'Std_Epochs_to_90pct': f"{steps_to_convergence_std[rank]:.1f}",
             'Total_FLOPs_to_Convergence_TFLOPs': f"{flops_values[i]:.2f}",
-            'FLOPs_Reduction_Percentage': f"{flops_reduction_pct[i]:.2f}",
-            'Epochs_to_90pct': f"{steps_to_convergence[rank]:.1f}"
+            'FLOPs_Reduction_Percentage': f"{flops_reduction_pct[i]:.2f}"
         })
     
     flops_summary_df = pd.DataFrame(flops_summary_data)
@@ -239,8 +251,10 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     ax2 = ax1.twinx()
     color_line = 'darkred'
     ax2.set_ylabel('Top-1 Accuracy', color=color_line, fontsize=12)
-    line = ax2.plot(rank_labels, acc_top1_values, color=color_line, marker='o', 
-                    linewidth=2, markersize=8, label='Top-1 Accuracy')
+    line = ax2.errorbar(rank_labels, acc_top1_values, yerr=acc_top1_std_values, 
+                        color=color_line, marker='o', linewidth=2, markersize=8, 
+                        capsize=4, capthick=1.5, elinewidth=1.5,
+                        label='Top-1 Accuracy')
     ax2.tick_params(axis='y', labelcolor=color_line)
     
     # Set y-axis limits to show full range up to 93.5%
@@ -251,7 +265,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
         # Print FLOPs above each bar
         ax1.text(i, flops_val + 200, f'{flops_val:.0f}', 
                 ha='center', va='bottom', fontsize=8, fontweight='bold')
-        # Print Accuracy near each point on the line
+        # Print Accuracy near each point on the line (slightly higher)
         ax2.text(i, acc_val + 0.003, f'{acc_val:.2%}', 
                 ha='center', va='bottom', fontsize=8, color='darkred', fontweight='bold')
     
@@ -273,8 +287,10 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     
     ax2 = ax1.twinx()
     ax2.set_ylabel('Top-2 Accuracy', color=color_line, fontsize=12)
-    line = ax2.plot(rank_labels, acc_top2_values, color=color_line, marker='o', 
-                    linewidth=2, markersize=8, label='Top-2 Accuracy')
+    line = ax2.errorbar(rank_labels, acc_top2_values, yerr=acc_top2_std_values,
+                        color=color_line, marker='o', linewidth=2, markersize=8,
+                        capsize=4, capthick=1.5, elinewidth=1.5,
+                        label='Top-2 Accuracy')
     ax2.tick_params(axis='y', labelcolor=color_line)
     ax2.set_ylim([0.96, 0.98])
     
@@ -284,7 +300,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
         ax1.text(i, flops_val + 200, f'{flops_val:.0f}', 
                 ha='center', va='bottom', fontsize=8, fontweight='bold')
         # Print Accuracy near each point on the line
-        ax2.text(i, acc_val + 0.0002, f'{acc_val:.2%}', 
+        ax2.text(i, acc_val + 0.1, f'{acc_val:.2%}', 
                 ha='center', va='bottom', fontsize=8, color='darkred', fontweight='bold')
     
     plt.title('FLOPs to Convergence vs Accuracy (Bars: FLOPs, Line: Accuracy)', fontsize=14)
@@ -302,7 +318,10 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     
     ax1.set_xlabel('Rank', fontsize=12)
     ax1.set_ylabel('Top-1 Accuracy', fontsize=12)
-    bars = ax1.bar(rank_labels, acc_top1_values, color=bar_colors, alpha=0.7, label='Top-1 Accuracy')
+    bars = ax1.bar(rank_labels, acc_top1_values, yerr=acc_top1_std_values, 
+                   color=bar_colors, alpha=0.7, capsize=5, 
+                   error_kw={'elinewidth': 2, 'capthick': 2},
+                   label='Top-1 Accuracy')
     ax1.tick_params(axis='y')
     # Scale accuracy axis so that 0.85 (85%) aligns visually with 8000 TFLOPs
     # We want the full accuracy range visible, going up to 0.935 (93.5%)
@@ -379,23 +398,23 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     ax2.set_ylim([5000, 8000])
     
     # Add text annotations showing Accuracy and FLOPs for each bar
-    for i, (rank_label, acc_val, flops_val) in enumerate(zip(rank_labels, acc_top1_values, flops_values)):
+    for i, (rank_label, acc_val, flops_val, std_val) in enumerate(zip(rank_labels, acc_top1_values, flops_values, acc_top1_std_values)):
         # Print Accuracy above each bar
-        ax1.text(i, acc_val + 0.003, f'{acc_val:.2%}', 
+        ax1.text(i, acc_val + std_val + 0.003, f'{acc_val:.2%}', 
                 ha='center', va='bottom', fontsize=10, fontweight='bold')
         # Print FLOPs beside each point on the line (to the right and slightly below to avoid overlap)
         # Adjust horizontal and vertical offsets based on rank
         if i == 0:  # BP - move more to the right
-            horizontal_offset = 0.15
+            horizontal_offset = -0.25
             vertical_offset = 150
         elif i == 1:  # rank 64 - lower
-            horizontal_offset = 0.1
-            vertical_offset = 190
+            horizontal_offset = -0.25
+            vertical_offset = 120
         elif i == 2:  # rank 36 - lower
-            horizontal_offset = 0.1
-            vertical_offset = 180
-        else:  # 32, 24, 20, 16, 10
-            horizontal_offset = 0.1
+            horizontal_offset = -0.25
+            vertical_offset = 120
+        else:  #10
+            horizontal_offset = -0.18
             vertical_offset = 100
         ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}', 
                 ha='left', va='top', fontsize=10, color='#B34700', fontweight='bold')
@@ -413,7 +432,10 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     
     ax1.set_xlabel('Rank', fontsize=12)
     ax1.set_ylabel('Top-2 Accuracy', fontsize=12)
-    bars = ax1.bar(rank_labels, acc_top2_values, color=bar_colors, alpha=0.7, label='Top-2 Accuracy')
+    bars = ax1.bar(rank_labels, acc_top2_values, yerr=acc_top2_std_values,
+                   color=bar_colors, alpha=0.7, capsize=5,
+                   error_kw={'elinewidth': 2, 'capthick': 2},
+                   label='Top-2 Accuracy')
     ax1.tick_params(axis='y')
     # Scale accuracy axis: show full range up to 98%
     # Using same scaling principle: (0.85 - min) / (max - min) = 8000 / max_flops
