@@ -239,7 +239,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     # Generate colors: Black for BP, blues gradient for LDFA (lighter to darker as rank decreases)
     ldfa_count = len(ldfa_ranks)
     blues = plt.cm.Blues(np.linspace(0.35, 0.85, ldfa_count))[::-1]  # Reverse so darker is for higher ranks
-    bar_colors = ['#000000'] + [blues[i] for i in range(ldfa_count)]  # Pure black (#000000) for BP
+    bar_colors = ["#000000"] + [blues[i] for i in range(ldfa_count)]  # Pure black (#000000) for BP
     
     # Version 1: Bars for FLOPs, Line for Accuracy
     print("\n=== Creating plots ===")
@@ -247,158 +247,22 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     # Top-1 Accuracy
     fig, ax1 = plt.subplots(figsize=(10, 6))
     
-    ax1.set_xlabel('Rank', fontsize=12)
-    ax1.set_ylabel('Total FLOPs to 90% Convergence (TFLOPs)', fontsize=12)
-    bars = ax1.bar(rank_labels, flops_values, color=bar_colors, alpha=0.7, label='FLOPs to Convergence')
-    ax1.tick_params(axis='y')
-    
-    # Second y-axis for accuracy
-    ax2 = ax1.twinx()
-    color_line = 'darkred'
-    ax2.set_ylabel('Top-1 Accuracy', color=color_line, fontsize=12)
-    line = ax2.errorbar(rank_labels, acc_top1_values, yerr=acc_top1_std_values, 
-                        color=color_line, marker='o', linewidth=2, markersize=8, 
-                        capsize=4, capthick=1.5, elinewidth=1.5,
-                        label='Top-1 Accuracy')
-    ax2.tick_params(axis='y', labelcolor=color_line)
-    
-    # Set y-axis limits to show full range up to 93.5%
-    ax2.set_ylim([0.76, 0.935])
-    
-    # Add text annotations showing FLOPs and Accuracy for each bar
-    for i, (rank_label, flops_val, acc_val) in enumerate(zip(rank_labels, flops_values, acc_top1_values)):
-        # Print FLOPs above each bar
-        ax1.text(i, flops_val + 200, f'{flops_val:.0f}', 
-                ha='center', va='bottom', fontsize=8, fontweight='bold')
-        # Print Accuracy near each point on the line (slightly higher)
-        ax2.text(i, acc_val + 0.003, f'{acc_val:.2%}', 
-                ha='center', va='bottom', fontsize=8, color='darkred', fontweight='bold')
-    
-    plt.title('FLOPs to Convergence vs Accuracy (Bars: FLOPs, Line: Accuracy)', fontsize=14)
-    
-    plt.tight_layout()
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_flops_line_acc_top1.png', dpi=300, bbox_inches='tight')
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_flops_line_acc_top1.svg', bbox_inches='tight')
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_flops_line_acc_top1.pdf', bbox_inches='tight')
-    print(f"Saved: {output_dir}/flops_accuracy_bars_flops_line_acc_top1.png/svg/pdf")
-    plt.close()
-    
-    # Top-2 Accuracy
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-    
-    ax1.set_xlabel('Rank', fontsize=12)
-    ax1.set_ylabel('Total FLOPs to 90% Convergence (TFLOPs)', fontsize=12)
-    bars = ax1.bar(rank_labels, flops_values, color=bar_colors, alpha=0.7, label='FLOPs to Convergence')
-    ax1.tick_params(axis='y')
-    
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('Top-2 Accuracy', color=color_line, fontsize=12)
-    line = ax2.errorbar(rank_labels, acc_top2_values, yerr=acc_top2_std_values,
-                        color=color_line, marker='o', linewidth=2, markersize=8,
-                        capsize=4, capthick=1.5, elinewidth=1.5,
-                        label='Top-2 Accuracy')
-    ax2.tick_params(axis='y', labelcolor=color_line)
-    ax2.set_ylim([0.96, 0.98])
-    
-    # Add text annotations showing FLOPs and Accuracy for each bar
-    for i, (rank_label, flops_val, acc_val) in enumerate(zip(rank_labels, flops_values, acc_top2_values)):
-        # Print FLOPs above each bar
-        ax1.text(i, flops_val + 200, f'{flops_val:.0f}', 
-                ha='center', va='bottom', fontsize=8, fontweight='bold')
-        # Print Accuracy near each point on the line
-        ax2.text(i, acc_val + 0.1, f'{acc_val:.2%}', 
-                ha='center', va='bottom', fontsize=8, color='darkred', fontweight='bold')
-    
-    plt.title('FLOPs to Convergence vs Accuracy (Bars: FLOPs, Line: Accuracy)', fontsize=14)
-    
-    plt.tight_layout()
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_flops_line_acc_top2.png', dpi=300, bbox_inches='tight')
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_flops_line_acc_top2.svg', bbox_inches='tight')
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_flops_line_acc_top2.pdf', bbox_inches='tight')
-    print(f"Saved: {output_dir}/flops_accuracy_bars_flops_line_acc_top2.png/svg/pdf")
-    plt.close()
-    
-    # Version 2: Bars for Accuracy, Line for FLOPs
-    
-    # Top-1 Accuracy
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-    
-    ax1.set_xlabel('Rank', fontsize=12)
-    ax1.set_ylabel('Top-1 Accuracy', fontsize=12)
+    ax1.set_xlabel('Rank', fontsize=16, fontweight='bold')
+    ax1.set_ylabel('Top-1 Accuracy', fontsize=16, fontweight='bold')
     bars = ax1.bar(rank_labels, acc_top1_values, yerr=acc_top1_std_values, 
                    color=bar_colors, alpha=0.7, capsize=5, 
                    error_kw={'elinewidth': 2, 'capthick': 2},
                    label='Top-1 Accuracy')
-    ax1.tick_params(axis='y')
-    # Scale accuracy axis so that 0.85 (85%) aligns visually with 8000 TFLOPs
-    # We want the full accuracy range visible, going up to 0.935 (93.5%)
-    # If 0.85 should align with 8000 TFLOPs at 100% of FLOPs axis:
-    # Then 0.85 needs to be at: 8000/8000 = 100% height
-    # If max accuracy is 0.935, and 0.85 is at 100% relative to FLOPs:
-    # We need: (0.85 - acc_min) / (0.935 - acc_min) = 8000 / 8000 = 1.0
-    # This means: 0.85 - acc_min = 0.935 - acc_min, which doesn't work
-    # Let's think differently: we want 85% to appear at same height as 8000 TFLOPs
-    # If FLOPs go 0 to 8000, and we want 85% at the 8000 position:
-    # (0.85 - acc_min) / (0.935 - acc_min) = 8000 / 8000 = full height
-    # Actually, let's make it proportional:
-    # FLOPs span: 0 to 8000 (range = 8000)
-    # Accuracy should span: such that 0.85 is at same relative height as 8000
-    # If we want accuracy from 0.76 to 0.935 (range = 0.175)
-    # Then: (0.85 - 0.76) / (0.935 - 0.76) = 0.09 / 0.175 ≈ 0.514
-    # And: 8000 / 8000 = 1.0, so they won't align
-    # Better: use range where (0.85 - min) / (max - min) = 8000 / 8000
-    # So if max = 0.935, then: 0.85 - min = 0.935 - min is wrong
-    # Let's make it: (0.85 - min) = (8000/8000) * (max - min)
-    # 0.85 - min = max - min => 0.85 = max (wrong)
-    # Actually to align 0.85 with 8000: make their relative positions equal
-    # rel_pos_acc = (0.85 - min) / (max - min)
-    # rel_pos_flops = 8000 / 8000 = 1.0
-    # So: (0.85 - min) / (0.935 - min) = 1.0 => 0.85 - min = 0.935 - min => 0.85 = 0.935 NO
-    # 
-    # Different approach: What if we want 85% at the SAME absolute height as 8000?
-    # If max_acc = 0.935, and we want 85% to visually align with 8000 TFLOPs:
-    # (0.85 - min) / (0.935 - min) = 8000 / 8000 = 1.0 is wrong
-    # 
-    # Correct interpretation: 85% should appear at same pixel height as 8000 TFLOPs
-    # FLOPs: 0 to 8000, so 8000 is at top (100% of axis)
-    # Accuracy: min_acc to 0.935, and we want 0.85 at 100% too
-    # So: min_acc = 0.85 - (0.935 - 0.85) = 0.85 - 0.085 = 0.765
-    # Let's use min = 0.76, max = 0.935, and 0.85 will be at (0.85-0.76)/(0.935-0.76) = 0.09/0.175 = 51.4% height
-    # But 8000 is at 100% height on FLOPs axis
-    #
-    # To make them align: we need (0.85 - min_acc) / (max_acc - min_acc) = 8000 / max_flops
-    # If max_flops = 8000: (0.85 - min_acc) / (0.935 - min_acc) = 1.0
-    # => 0.85 - min_acc = 0.935 - min_acc => impossible
-    #
-    # Wait, I need to make 8000 appear at same height as 0.85
-    # FLOPs axis: 0 to max_flops, where 8000 is somewhere in between
-    # Accuracy axis: min_acc to max_acc, where 0.85 is somewhere in between
-    # For visual alignment: (8000 - 0) / (max_flops - 0) = (0.85 - min_acc) / (max_acc - min_acc)
-    # If we set: max_acc = 0.935, and want to find min_acc such that 8000 aligns with 0.85
-    # Assuming max_flops = 8000: 8000/8000 = (0.85 - min_acc)/(0.935 - min_acc)
-    # => 1 = (0.85 - min_acc)/(0.935 - min_acc) => 0.935 - min_acc = 0.85 - min_acc => NO
-    #
-    # OK the issue is if max_flops = 8000 and 8000 should align with something less than max...
-    # Let me set max_flops higher. If max_flops = 9500, then:
-    # 8000/9500 = (0.85 - min_acc)/(0.935 - min_acc)
-    # 0.842 = (0.85 - min_acc)/(0.935 - min_acc)
-    # 0.842 * (0.935 - min_acc) = 0.85 - min_acc
-    # 0.787 - 0.842*min_acc = 0.85 - min_acc
-    # 0.158*min_acc = 0.063
-    # min_acc = 0.399 (way too low)
-    #
-    # Let me try: min_acc = 0.76, max_acc = 0.935, max_flops such that 0.85 aligns with 8000
-    # (0.85 - 0.76)/(0.935 - 0.76) = 8000/max_flops
-    # 0.09/0.175 = 8000/max_flops
-    # max_flops = 8000 * 0.175 / 0.09 = 15555.56
+    ax1.tick_params(axis='y', labelsize=15)
+    ax1.tick_params(axis='x', labelsize=15)
     ax1.set_ylim([0.76, 0.935])
     
     ax2 = ax1.twinx()
     color_line = '#B34700'  # Even darker orange
-    ax2.set_ylabel('Total FLOPs to 90% Convergence (TFLOPs)', fontsize=12)
+    ax2.set_ylabel('Total FLOPs(TFLOPs)', fontsize=16, fontweight='bold')
     line = ax2.plot(rank_labels, flops_values, color=color_line, marker='s', 
                     linewidth=2, markersize=8, label='FLOPs to Convergence')
-    ax2.tick_params(axis='y')
+    ax2.tick_params(axis='y', labelsize=14)
     # Set FLOPs scale so 8000 aligns with 0.85 on accuracy axis
     # (0.85 - 0.76) / (0.935 - 0.76) = 8000 / max_flops
     # 0.09 / 0.175 = 8000 / max_flops => max_flops = 15556
@@ -408,15 +272,15 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     for i, (rank_label, acc_val, flops_val, flops_std, acc_std) in enumerate(zip(rank_labels, acc_top1_values, flops_values, flops_std_values, acc_top1_std_values)):
         # Print Accuracy above each bar
         ax1.text(i, acc_val + acc_std + 0.003, f'{acc_val:.2%}', 
-                ha='center', va='bottom', fontsize=10, fontweight='bold')
+                ha='center', va='bottom', fontsize=11, fontweight='bold')
         # Print FLOPs beside each point on the line (to the right and slightly below to avoid overlap)
         # Adjust horizontal and vertical offsets based on rank
         if i == 0:  # BP - move more to the right
-            horizontal_offset = -0.6
-            vertical_offset = 200
+            horizontal_offset = -0.63
+            vertical_offset = 240
         elif i == 1:  # rank 64 - lower
-            horizontal_offset = -0.45
-            vertical_offset = 168
+            horizontal_offset = -0.5
+            vertical_offset = 170
         elif i == 2:  # rank 36 - lower
             horizontal_offset = -0.4
             vertical_offset = 120
@@ -427,7 +291,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
             horizontal_offset = -0.18
             vertical_offset = 100
         ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}±{flops_std:.0f}', 
-                ha='left', va='top', fontsize=10, color='#B34700', fontweight='bold')
+                ha='left', va='top', fontsize=11, color="#9B4105", fontweight='bold')
     
     plt.title('FLOPs to Convergence vs Accuracy (Bars: Accuracy, Line: FLOPs)', fontsize=14)
     
@@ -437,68 +301,6 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_top1.pdf', bbox_inches='tight')
     print(f"Saved: {output_dir}/flops_accuracy_bars_acc_line_flops_top1.png/svg/pdf")
     plt.close()
-    
-    # Top-2 Accuracy
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-    
-    ax1.set_xlabel('Rank', fontsize=12)
-    ax1.set_ylabel('Top-2 Accuracy', fontsize=12)
-    bars = ax1.bar(rank_labels, acc_top2_values, yerr=acc_top2_std_values,
-                   color=bar_colors, alpha=0.7, capsize=5,
-                   error_kw={'elinewidth': 2, 'capthick': 2},
-                   label='Top-2 Accuracy')
-    ax1.tick_params(axis='y')
-    # Scale accuracy axis: show full range up to 98%
-    # Using same scaling principle: (0.85 - min) / (max - min) = 8000 / max_flops
-    # But for top-2, let's use a natural range showing the data
-    ax1.set_ylim([0.96, 0.98])
-    ax1.grid(True, alpha=0.3)
-    
-    ax2 = ax1.twinx()
-    color_line = '#B34700'  # Even darker orange
-    ax2.set_ylabel('Total FLOPs to 90% Convergence (TFLOPs)', fontsize=12)
-    line = ax2.plot(rank_labels, flops_values, color=color_line, marker='s', 
-                    linewidth=2, markersize=8, label='FLOPs to Convergence')
-    ax2.tick_params(axis='y')
-    # For consistency, use the same FLOPs scale as top-1
-    ax2.set_ylim([0, 15556])
-    
-    # Add text annotations showing Accuracy and FLOPs for each bar
-    for i, (rank_label, acc_val, flops_val) in enumerate(zip(rank_labels, acc_top2_values, flops_values)):
-        # Print Accuracy above each bar
-        ax1.text(i, acc_val + 0.0002, f'{acc_val:.2%}', 
-                ha='center', va='bottom', fontsize=10, fontweight='bold')
-        # Print FLOPs beside each point on the line (to the right and slightly below to avoid overlap)
-        # Adjust horizontal and vertical offsets based on rank
-        if i == 0:  # BP - move more to the right
-            horizontal_offset = 0.15
-            vertical_offset = 150
-        elif i == 1:  # rank 64 - lower
-            horizontal_offset = 0.1
-            vertical_offset = 190
-        elif i == 2:  # rank 36 - lower
-            horizontal_offset = 0.1
-            vertical_offset = 180
-        else:  # 32, 24, 20, 16, 10
-            horizontal_offset = 0.1
-            vertical_offset = 100
-        ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}', 
-                ha='left', va='top', fontsize=10, color='#B34700', fontweight='bold')
-    
-    plt.title('FLOPs to Convergence vs Accuracy (Bars: Accuracy, Line: FLOPs)', fontsize=14)
-    
-    plt.tight_layout()
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_top2.png', dpi=300, bbox_inches='tight')
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_top2.svg', bbox_inches='tight')
-    plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_top2.pdf', bbox_inches='tight')
-    print(f"Saved: {output_dir}/flops_accuracy_bars_acc_line_flops_top2.png/svg/pdf")
-    plt.close()
-    
-    print("\n=== All plots created successfully ===")
-    print("Generated 4 versions:")
-    print("1. Bars: FLOPs, Line: Accuracy (Top-1 and Top-2)")
-    print("2. Bars: Accuracy, Line: FLOPs (Top-1 and Top-2)")
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Plot combined FLOPs and accuracy analysis')
