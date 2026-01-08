@@ -147,6 +147,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     # FLOPs to convergence = epochs_to_90% * FLOPs_per_epoch
     flops_to_convergence = {}
     flops_to_convergence_std = {}
+    flops_to_convergence_sem = {}
     steps_to_convergence = {}
     steps_to_convergence_std = {}
     accuracies_top1 = {}
@@ -186,18 +187,22 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
         # Calculate FLOPs to convergence (in TFLOPs)
         # Total FLOPs = epochs × batches_per_epoch × FLOPs_per_batch
         # Std FLOPs = epochs_std × batches_per_epoch × FLOPs_per_batch
+        # SEM FLOPs = Std FLOPs / sqrt(n_experiments)
         if rank in flops_per_batch:
             flops_to_convergence[rank] = (epochs * flops_per_epoch[rank]) / 1000  # Convert to TFLOPs
             flops_to_convergence_std[rank] = (epochs_std * flops_per_epoch[rank]) / 1000  # Std in TFLOPs
+            flops_to_convergence_sem[rank] = flops_to_convergence_std[rank] / np.sqrt(5)  # SEM (n=5 experiments)
         else:
             flops_to_convergence[rank] = (epochs * flops_per_epoch['BP']) / 1000  # Use BP FLOPs
             flops_to_convergence_std[rank] = (epochs_std * flops_per_epoch['BP']) / 1000  # Use BP FLOPs std
+            flops_to_convergence_sem[rank] = flops_to_convergence_std[rank] / np.sqrt(5)  # SEM (n=5 experiments)
     
     # Prepare data for plotting
     # Reverse order: BP first, then 64, 36, 32, 24, 20, 16, 10
     ranks_sorted = ['BP'] + sorted([r for r in ldfa_ranks if isinstance(r, int)], reverse=True)
     flops_values = [flops_to_convergence[r] for r in ranks_sorted]
     flops_std_values = [flops_to_convergence_std[r] for r in ranks_sorted]
+    flops_sem_values = [flops_to_convergence_sem[r] for r in ranks_sorted]
     acc_top1_values = [accuracies_top1[r] for r in ranks_sorted]
     acc_top1_std_values = [accuracies_top1_std[r] for r in ranks_sorted]
     acc_top2_values = [accuracies_top2[r] for r in ranks_sorted]
@@ -290,7 +295,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
         else:  #10
             horizontal_offset = -0.18
             vertical_offset = 100
-        ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}±{flops_std:.0f}', 
+        ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}', 
                 ha='left', va='top', fontsize=11, color="#9B4105", fontweight='bold')
     
     plt.title('FLOPs to Convergence vs Accuracy (Bars: Accuracy, Line: FLOPs)', fontsize=14)
@@ -300,6 +305,62 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_top1.svg', bbox_inches='tight')
     plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_top1.pdf', bbox_inches='tight')
     print(f"Saved: {output_dir}/flops_accuracy_bars_acc_line_flops_top1.png/svg/pdf")
+    plt.close()
+    
+    # Version 2: Same as Version 1 but with FLOPs error bars (SEM) instead of text
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+    
+    ax1.set_xlabel('Rank', fontsize=16, fontweight='bold')
+    ax1.set_ylabel('Top-1 Accuracy', fontsize=16, fontweight='bold')
+    bars = ax1.bar(rank_labels, acc_top1_values, yerr=acc_top1_std_values, 
+                   color=bar_colors, alpha=0.7, capsize=5, 
+                   error_kw={'elinewidth': 2, 'capthick': 2},
+                   label='Top-1 Accuracy')
+    ax1.tick_params(axis='y', labelsize=15)
+    ax1.tick_params(axis='x', labelsize=15)
+    ax1.set_ylim([0.76, 0.935])
+    
+    ax2 = ax1.twinx()
+    color_line = '#B34700'  # Even darker orange
+    ax2.set_ylabel('Total FLOPs(TFLOPs)', fontsize=16, fontweight='bold')
+    line = ax2.errorbar(rank_labels, flops_values, yerr=flops_sem_values, 
+                        color=color_line, marker='s', linewidth=2, markersize=8,
+                        capsize=4, capthick=1.5, elinewidth=1.5,
+                        label='FLOPs to Convergence')
+    ax2.tick_params(axis='y', labelsize=14)
+    ax2.set_ylim([5000, 8000])
+    
+    # Add text annotations showing Accuracy and FLOPs for each bar
+    for i, (rank_label, acc_val, flops_val, acc_std) in enumerate(zip(rank_labels, acc_top1_values, flops_values, acc_top1_std_values)):
+        # Print Accuracy above each bar
+        ax1.text(i, acc_val + acc_std + 0.003, f'{acc_val:.2%}', 
+                ha='center', va='bottom', fontsize=11, fontweight='bold')
+        # Print FLOPs beside each point on the line
+        if i == 0:  # BP - move more to the right
+            horizontal_offset = -0.3
+            vertical_offset = 220
+        elif i == 1:  # rank 64 - lower
+            horizontal_offset = -0.3
+            vertical_offset = 170
+        elif i == 2:  # rank 36 - lower
+            horizontal_offset = -0.25
+            vertical_offset = 120
+        elif i == 3:  # rank 32 - lower
+            horizontal_offset = -0.3
+            vertical_offset = 160
+        else:  # rank 24, 20, 16, 10
+            horizontal_offset = -0.18
+            vertical_offset = 160
+        ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}', 
+                ha='left', va='top', fontsize=11, color="#9B4105", fontweight='bold')
+    
+    plt.title('FLOPs to Convergence vs Accuracy (Bars: Accuracy, Line: FLOPs)', fontsize=14)
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_with_errorbars_top1.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_with_errorbars_top1.svg', bbox_inches='tight')
+    plt.savefig(f'{output_dir}/flops_accuracy_bars_acc_line_flops_with_errorbars_top1.pdf', bbox_inches='tight')
+    print(f"Saved: {output_dir}/flops_accuracy_bars_acc_line_flops_with_errorbars_top1.png/svg/pdf")
     plt.close()
 
 if __name__ == '__main__':
