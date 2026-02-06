@@ -46,8 +46,8 @@ def reinitialize_pq_layers(trainer, r=None):
 
 def get_cifar100_loaders(batch_size=32, num_subset_classes=1000, root='./data', num_workers= 4):
     transform_train = transforms.Compose([
-    transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
-    transforms.RandomRotation(5),  # Randomly rotate images by up to 10 degrees
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(5),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
 ])
