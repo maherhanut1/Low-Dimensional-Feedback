@@ -129,9 +129,9 @@ def main():
     plt.subplot(1, 2, 1)
     plt.axhline(bwd_bp/1e9, color='g', linestyle='--', label='BP_Linear Backward')
     plt.plot(r_list, [f/1e9 for f in bwd_ldfa_list], marker='s', label='LDFA_Linear Backward')
-    plt.xlabel('Rank (r)')
-    plt.ylabel('Average Backward FLOPs (GFLOPs)')
-    plt.title('Backward FLOPs vs Rank for VisionTransformer')
+    plt.xlabel('Rank (r)', fontweight='bold')
+    plt.ylabel('Average Backward FLOPs (GFLOPs)', fontweight='bold')
+    plt.title('Backward FLOPs vs Rank', fontweight='bold')
     plt.legend()
     plt.grid(True)
 
@@ -140,14 +140,15 @@ def main():
     savings = [f / bwd_bp if bwd_bp > 0 else 0 for f in bwd_ldfa_list]
     plt.bar([str(r) for r in r_list], savings, color='skyblue')
     plt.axhline(1, color='r', linestyle='--', label='BP_Linear (baseline)')
-    plt.xlabel('Rank (r)')
-    plt.ylabel('Backward FLOPs Ratio (relative to BP)')
-    plt.title('LDFA Backward FLOPs Ratio vs BP_Linear')
+    plt.xlabel('Rank (r)', fontweight='bold')
+    plt.ylabel('Backward FLOPs Ratio', fontweight='bold')
+    plt.title('LDFA Backward FLOPs Ratio vs BP_Linear', fontweight='bold')
     for i, val in enumerate(savings):
-        plt.text(i, val, f"{val:.2f}x", ha='center', va='bottom', fontsize=8)
+        plt.text(i, val, f"{val:.2f}x", ha='center', va='bottom', fontsize=10)
     plt.legend()
     plt.tight_layout()
-    plt.savefig('vit_flops_benchmark.svg')
+    plt.savefig('vit_flops_benchmark.pdf')
+    plt.savefig('vit_flops_benchmark.png')
     plt.show()
 
 if __name__ == '__main__':

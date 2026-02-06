@@ -54,11 +54,6 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                 last_acc = acc_values[-1]
                 last_step = acc_steps[-1]
                 
-                # Add random boost to LDFA accuracies (0.02-0.03)
-                if is_ldfa_task(task_name):
-                    boost = np.random.uniform(0.001, 0.002)
-                    max_acc = min(max_acc + boost, 1.0)  # Cap at 1.0
-                    last_acc = min(last_acc + boost, 1.0)  # Cap at 1.0
                 
                 # Top2 accuracy
                 if top2_data.get('values'):
@@ -68,11 +63,6 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                     max_top2 = top2_values[max_top2_idx]
                     max_top2_step = top2_steps[max_top2_idx]
                     last_top2 = top2_values[-1]
-                    
-                    if is_ldfa_task(task_name):
-                        boost = np.random.uniform(0.0005, 0.001)
-                        max_top2 = min(max_top2 + boost, 1.0)  # Cap at 1.0
-                        last_top2 = min(last_top2 + boost, 1.0)  # Cap at 1.0
                 
                 else:
                     max_top2 = max_top2_step = last_top2 = 'N/A'
@@ -80,13 +70,7 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                 # Find step where accuracy reached 90% of final/last accuracy
                 target_acc = 0.9 * last_acc
                 step_90pct_last = None
-                
-                # Apply boost to acc_values for LDFA tasks when searching for convergence step
-                search_acc_values = acc_values
-                for step, acc in zip(acc_steps, search_acc_values):
-                    if acc >= target_acc:
-                        step_90pct_last = step
-                        break
+
                 
                 # Get absolute time from event files
                 ea = EventAccumulator(str(exp_folder) + '/logs')

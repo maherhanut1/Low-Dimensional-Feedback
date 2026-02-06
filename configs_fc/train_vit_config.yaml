@@ -1,0 +1,11 @@
+batch_size: 256
+dataset: cifar10
+image_size: 32
+ldfa_rank: 4
+learning_rate: 0.0005
+log_name: ldfa_rank4
+model_name: vit_b_16
+num_classes: 10
+num_epochs: 250
+use_ldfa_linear: true
+weight_decay: 0.1

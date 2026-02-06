@@ -1,0 +1,26 @@
+# Training configuration for ViT
+# Example: edit these values as needed
+
+batch_size: 32
+num_epochs: 70
+learning_rate: 0.0004
+weight_decay: 0.00005
+eta_min: 0.000000001
+
+use_ldfa_linear: True
+ldfa_rank: 42
+qp_lr: 0.015
+qp_weight_decay: 0.0
+qp_eta_min: 0.000000001
+
+
+#model specificcations
+embed_dim: 512
+drop_rate: 0.0
+
+dataset: cifar100
+num_subset_classes: 100
+model_name: fc
+image_size: 32
+num_classes: 100
+log_name: LDFA_42_lr5e4_wd1e1_bs_256_qp_15e2

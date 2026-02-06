@@ -219,11 +219,6 @@ def plot_training_curves(experiments, metrics, save_dir='experiment_plots'):
                     steps_list.append(np.array(exp_data[metric]['steps']))
                     values = np.array(exp_data[metric]['values'])
                     
-                    # Add random boost to LDFA accuracy values (0.02-0.03)
-                    if is_ldfa_task(task_name) and 'accuracy' in metric.lower() and '1' in metric.lower():
-                        boost = np.random.uniform(0.0025, 0.0045)
-                        values = np.minimum(values + boost, 1.0)  # Cap at 1.0
-                    
                     values_list.append(values)
             
             if not steps_list:
@@ -292,10 +287,10 @@ def plot_training_curves(experiments, metrics, save_dir='experiment_plots'):
                            alpha=0.2, color='gray', zorder=10)
         
         # Formatting
-        ax.set_xlabel('Training Step', fontsize=14, fontweight='bold')
-        ax.set_ylabel(info['ylabel'], fontsize=14, fontweight='bold')
-        ax.set_title(info['title'], fontsize=16, fontweight='bold')
-        ax.tick_params(labelsize=12)
+        ax.set_xlabel('Training Step', fontsize=20, fontweight='bold')
+        ax.set_ylabel(info['ylabel'], fontsize=20, fontweight='bold')
+        ax.set_title(info['title'], fontsize=24, fontweight='bold')
+        ax.tick_params(labelsize=20)
         
         # Create colorbar for LDFA ranks instead of legend
         if ldfa_tasks:
@@ -314,22 +309,18 @@ def plot_training_curves(experiments, metrics, save_dir='experiment_plots'):
             
             # Add colorbar
             cbar = plt.colorbar(sm, ax=ax, pad=0.02, aspect=30)
-            cbar.set_label('LDFA Rank', fontsize=12, fontweight='bold', rotation=270, labelpad=20)
-            cbar.ax.tick_params(labelsize=11)
-            
-            # Add BP to the title or as text annotation
-            if bp_tasks:
-                ax.text(0.02, 0.98, 'BP (black line)', transform=ax.transAxes,
-                       fontsize=11, fontweight='bold', verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            cbar.set_label('LDFA Rank', fontsize=18, fontweight='bold', rotation=270, labelpad=25)
+            cbar.ax.tick_params(labelsize=20)
         
         plt.tight_layout()
         
         # Save plot
         output_file = os.path.join(save_dir, f"{info['filename']}.png")
         output_file_svg = os.path.join(save_dir, f"{info['filename']}.svg")
+        output_file_pdf = os.path.join(save_dir, f"{info['filename']}.pdf")
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         plt.savefig(output_file_svg, bbox_inches='tight')
+        plt.savefig(output_file_pdf, bbox_inches='tight')
         print(f"\n{info['title']} plot saved to: {output_file}")
         print(f"{info['title']} plot saved to: {output_file_svg}")
         plt.show()

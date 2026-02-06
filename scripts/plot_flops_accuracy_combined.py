@@ -351,8 +351,8 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
         else:  # rank 24, 20, 16, 10
             horizontal_offset = -0.18
             vertical_offset = 160
-        ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}', 
-                ha='left', va='top', fontsize=11, color="#9B4105", fontweight='bold')
+        # ax2.text(i + horizontal_offset, flops_val - vertical_offset, f'{flops_val:.0f}', 
+        #         ha='left', va='top', fontsize=11, color="#9B4105", fontweight='bold')
     
     plt.title('FLOPs to Convergence vs Accuracy (Bars: Accuracy, Line: FLOPs)', fontsize=14)
     

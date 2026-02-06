@@ -44,7 +44,29 @@ def reinitialize_pq_layers(trainer, r=None):
     #     trainer.optimizers[1].state.clear()
 
 
+def get_cifar100_loaders(batch_size=32, num_subset_classes=1000, root='./data', num_workers= 4):
+    transform_train = transforms.Compose([
+    transforms.RandomHorizontalFlip(),  # Randomly flip images horizontally
+    transforms.RandomRotation(5),  # Randomly rotate images by up to 10 degrees
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
+])
 
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5071, 0.4867, 0.4408], std=[0.2675, 0.2565, 0.2761])
+    ])
+
+    trainset = datasets.CIFAR100(root=root, train=True, download=True, transform=transform_train)
+    testset = datasets.CIFAR100(root=root, train=False, download=True, transform=transform_test)
+    test_idx = [i for i in range(len(testset.targets)) if testset.targets[i] < num_subset_classes]
+    train_idx = [i for i in range(len(trainset.targets)) if trainset.targets[i] < num_subset_classes]
+    testset = torch.utils.data.Subset(testset, test_idx)
+    trainset = torch.utils.data.Subset(trainset, train_idx)
+    testloader = DataLoader(testset, batch_size=4,
+                                         shuffle=False, num_workers=1)
+    trainloader = DataLoader(trainset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    return trainloader, testloader
 
 def get_cifar10_loaders(batch_size=32, root='./data', num_workers= 4):
     transform_train = transforms.Compose([
@@ -140,8 +162,8 @@ def main():
     # Data
     if dataset.lower() == 'cifar10':
         train_loader, test_loader = get_cifar10_loaders(batch_size=batch_size, root='./data', num_workers=12)
-    # elif dataset.lower() == 'cifar100':
-    #     train_loader, test_loader = get_cifar100_loaders(batch_size=batch_size, root='./data', num_subset_classes=num_subset_classes)
+    elif dataset.lower() == 'cifar100':
+        train_loader, test_loader = get_cifar100_loaders(batch_size=batch_size, root='./data', num_subset_classes=num_subset_classes,  num_workers=12)
     # elif dataset.lower() == 'imagenet':
     #     # You may want to set the path in your config as 'imagenet_dir'
     #     imagenet_dir = config.get('imagenet_dir', '/home/maherhanut/Documents/data/imagenet')
@@ -187,29 +209,11 @@ def main():
         model_optimizer = optim.Adam(model_params, lr=lr, weight_decay=weight_decay, amsgrad=True)
         qp_optimizer = optim.Adam(qp_params, lr=qp_lr, weight_decay=qp_weight_decay, amsgrad=True)
 
-        # warmup_scheduler = torch.optim.lr_scheduler.LinearLR(model_optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
-        # main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=eta_min)
-        
+        qp_scheduler = torch.optim.lr_scheduler.ExponentialLR(qp_optimizer, gamma=0.975)
         main_scheduler = torch.optim.lr_scheduler.ExponentialLR(model_optimizer, gamma=0.975)
-        
-        model_scheduler = torch.optim.lr_scheduler.SequentialLR(
-            model_optimizer,
-            schedulers=[warmup_scheduler, main_scheduler],
-            milestones=[10 * len(train_loader)]
-        )
-
-
-        qp_warmup_scheduler = torch.optim.lr_scheduler.LinearLR(qp_optimizer, start_factor=1/10, end_factor=1.0, total_iters=10 * len(train_loader))
-        qp_main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(qp_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=qp_eta_min)
-
-        qp_scheduler = torch.optim.lr_scheduler.SequentialLR(
-            qp_optimizer,
-            schedulers=[qp_warmup_scheduler, qp_main_scheduler],
-            milestones=[10 * len(train_loader)]
-        )
 
         optimizers = [model_optimizer, qp_optimizer]
-        schedulers = [model_scheduler, qp_scheduler]
+        schedulers = [main_scheduler, qp_scheduler]
         modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
         modification_rate = len(train_loader) // 2  # Reinit every half epoch
 

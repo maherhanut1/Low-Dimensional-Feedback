@@ -1,0 +1,20 @@
+# Training configuration for ViT
+# Example: edit these values as needed
+
+batch_size: 32
+num_epochs: 70
+learning_rate: 0.0004
+weight_decay: 0.00005
+eta_min: 0.000000001
+
+use_ldfa_linear: False
+
+embed_dim: 512
+drop_rate: 0.0
+
+dataset: cifar100
+num_subset_classes: 75
+model_name: fc_75
+image_size: 32
+num_classes: 75
+log_name: BP_lr3e4_wd1e1_bs_256
