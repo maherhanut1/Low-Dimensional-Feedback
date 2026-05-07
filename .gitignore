@@ -1,5 +1,6 @@
 # Ignore data files and folders
-/data/
+/data/*
+!/data/imagenet100_classes.txt
 *.tar.gz
 
 /artifacts/
