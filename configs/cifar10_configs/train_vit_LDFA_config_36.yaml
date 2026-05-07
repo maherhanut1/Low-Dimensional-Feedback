@@ -9,7 +9,7 @@ eta_min: 0.000000001
 
 use_ldfa_linear: True
 ldfa_rank: 36
-qp_lr: 0.015
+qp_lr: 0.03
 qp_weight_decay: 0.0
 qp_eta_min: 0.000000001
 

@@ -1,0 +1,28 @@
+# Training configuration for ViT on Tiny ImageNet - Backpropagation
+
+batch_size: 256
+num_epochs: 250
+learning_rate: 0.0005
+weight_decay: 0.1
+eta_min: 0.00000000001 #0.000000001
+
+use_ldfa_linear: False
+
+# Model specifications (same as CIFAR-10 experiments)
+patch_size: 8          # 64/8 = 8 patches per side (vs 4 for 32x32 CIFAR)
+in_chans: 3
+embed_dim: 384
+depth: 8
+num_heads: 8
+mlp_ratio: 2.0
+qkv_bias: true
+drop_rate: 0.1
+attn_drop_rate: 0.1
+drop_path_rate: 0.1
+
+dataset: tiny_imagenet
+data_dir: ./data/tiny-imagenet-200
+image_size: 64
+num_classes: 200
+model_name: vit_b_16
+log_name: BP_lr5e4_wd1e1_bs_256_Tiny_350_epochs_small_eta_min

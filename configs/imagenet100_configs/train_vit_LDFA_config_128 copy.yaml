@@ -1,0 +1,33 @@
+# Training configuration for ViT on ImageNet-100 - LDFA rank 64
+
+batch_size: 512
+num_epochs: 300
+learning_rate: 0.0005
+weight_decay: 0.05
+eta_min: 0.00001
+
+use_ldfa_linear: True
+ldfa_rank: 128
+qp_lr: 0.005
+qp_weight_decay: 0.0
+qp_eta_min: 0.001 #0.000000001
+
+# Model specifications (same as CIFAR-10 experiments)
+patch_size: 16
+in_chans: 3
+embed_dim: 768
+depth: 12
+num_heads: 12
+mlp_ratio: 4.0
+qkv_bias: true
+drop_rate: 0.1
+attn_drop_rate: 0.1
+drop_path_rate: 0.1
+
+dataset: imagenet100
+data_dir: /home/maherhanut/Documents/data/imagenet
+class_list_file: ./data/imagenet100_classes.txt
+image_size: 160
+num_classes: 100
+model_name: vit_b_16
+log_name: LDFA_128_lr5e4_wd5e2_bs_512_qplr_1e2_qpetamin_5e3
