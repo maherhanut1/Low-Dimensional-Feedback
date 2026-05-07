@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torch import autograd
 
 
+@torch.compiler.allow_in_graph
 class LinearGrad(autograd.Function):
     """
     Autograd Function that Does a backward pass using the B matrix of the layer
@@ -13,17 +14,18 @@ class LinearGrad(autograd.Function):
     @staticmethod
     # Same as reference linear function, but with additional weight tensor for backward
     def forward(context, input, weight, P, Q, bias=None):
-        
-        output = input @ (weight.t())
-        if bias is not None:
-            output += bias.unsqueeze(0).expand_as(output)
-        
+        output = F.linear(input, weight, bias)
         context.save_for_backward(input, weight, P, Q, bias)
         return output
 
     @staticmethod
     def backward(context, grad_output):
         input, weight, P, Q, bias = context.saved_tensors
+        # Cast to match grad_output dtype (needed for AMP/FP16 compatibility)
+        input = input.to(grad_output.dtype)
+        weight = weight.to(grad_output.dtype)
+        P = P.to(grad_output.dtype)
+        Q = Q.to(grad_output.dtype)
         grad_input = grad_weight = grad_Q = grad_P = grad_bias = grad_input_intermediate = None
         # Gradient input
         if context.needs_input_grad[0]:
@@ -119,8 +121,8 @@ class Linear(nn.Linear):
         sqrt_S = torch.sqrt(S)
 
         with torch.no_grad():
-            self.P.data = U * sqrt_S.unsqueeze(0)        # (out_features, rank)
-            self.Q.data = sqrt_S.unsqueeze(1) * Vt       # (rank, in_features)
+            self.P.data = (U * sqrt_S.unsqueeze(0)).contiguous()        # (out_features, rank)
+            self.Q.data = (sqrt_S.unsqueeze(1) * Vt).contiguous()       # (rank, in_features)
 
     def init_parameters(self) -> None:
         fan_in, fan_out = nn.init._calculate_fan_in_and_fan_out(self.weight)

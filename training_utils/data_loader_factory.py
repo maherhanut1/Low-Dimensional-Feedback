@@ -142,6 +142,7 @@ class CIFAR10Policy(object):
         return self.policies[policy_idx](img)
     def __repr__(self):
         return "AutoAugment CIFAR10 Policy"
+import os
 import torch
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Subset
@@ -264,6 +265,128 @@ def get_coco_segmentation_loaders(batch_size=64, root='./data', coco_annFile_tra
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
     test_loader = DataLoader(test_set, batch_size=64, shuffle=False, num_workers=num_workers, pin_memory=True, prefetch_factor=2)
     return train_loader, test_loader
+
+def get_imagenet100_loaders(data_dir, batch_size=128, num_workers=8,
+                            class_list_file='./data/imagenet100_classes.txt'):
+    """
+    Get ImageNet-100 data loaders — a 100-class subset of full ImageNet.
+
+    Expects the standard ImageNet folder layout at data_dir:
+        data_dir/train/<synset_id>/...
+        data_dir/val/<synset_id>/...
+
+    Augmentation follows standard ViT/DeiT ImageNet recipe:
+      - Train: RandomResizedCrop(224), RandomHorizontalFlip, RandAugment(n=2, m=9),
+               ToTensor, Normalize, RandomErasing(p=0.25)
+      - Val:   Resize(256), CenterCrop(224), ToTensor, Normalize
+
+    Args:
+        data_dir:         Path to the extracted ImageNet root (with train/ and val/).
+        batch_size:       Training batch size.
+        num_workers:      DataLoader workers.
+        class_list_file:  Text file with one synset id per line (100 lines).
+    """
+    # Load the 100 selected synset ids
+    with open(class_list_file, 'r') as f:
+        selected_classes = [line.strip() for line in f if line.strip()]
+    assert len(selected_classes) == 100, f"Expected 100 classes, got {len(selected_classes)}"
+
+    mean = [0.485, 0.456, 0.406]
+    std  = [0.229, 0.224, 0.225]
+
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(160, scale=(0.08, 1.0), interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandAugment(num_ops=2, magnitude=9),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+        transforms.RandomErasing(p=0.25),
+    ])
+    val_transform = transforms.Compose([
+        transforms.Resize(192, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.CenterCrop(160),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
+
+    # Build full datasets first so we can read their class_to_idx mapping
+    full_train = datasets.ImageFolder(root=os.path.join(data_dir, 'train'),
+                                      transform=train_transform)
+    full_val   = datasets.ImageFolder(root=os.path.join(data_dir, 'val'),
+                                      transform=val_transform)
+
+    # Filter samples to only the 100 selected classes
+    selected_set = set(selected_classes)
+    train_indices = [i for i, (_, lbl) in enumerate(full_train.samples)
+                     if full_train.classes[lbl] in selected_set]
+    val_indices   = [i for i, (_, lbl) in enumerate(full_val.samples)
+                     if full_val.classes[lbl] in selected_set]
+
+    # Remap labels 0-99 in sorted class order
+    sorted_classes = sorted(selected_classes)
+    train_label_remap = {full_train.class_to_idx[c]: new_lbl
+                         for new_lbl, c in enumerate(sorted_classes)
+                         if c in full_train.class_to_idx}
+    val_label_remap   = {full_val.class_to_idx[c]: new_lbl
+                         for new_lbl, c in enumerate(sorted_classes)
+                         if c in full_val.class_to_idx}
+
+    class RemappedSubset(torch.utils.data.Dataset):
+        def __init__(self, dataset, indices, label_remap):
+            self.dataset = dataset
+            self.indices = indices
+            self.label_remap = label_remap
+        def __len__(self):
+            return len(self.indices)
+        def __getitem__(self, idx):
+            img, lbl = self.dataset[self.indices[idx]]
+            return img, self.label_remap[lbl]
+
+    train_dataset = RemappedSubset(full_train, train_indices, train_label_remap)
+    val_dataset   = RemappedSubset(full_val,   val_indices,   val_label_remap)
+
+    print(f"ImageNet-100: {len(train_dataset)} train / {len(val_dataset)} val samples")
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=True, prefetch_factor=2,
+                              persistent_workers=True)
+    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=True, prefetch_factor=2,
+                              persistent_workers=True)
+    return train_loader, val_loader
+
+
+def get_tiny_imagenet_loaders(data_dir='./data/tiny-imagenet-200', batch_size=128, num_workers=8):
+    """
+    Get Tiny ImageNet data loaders.
+    Tiny ImageNet: 200 classes, 64x64 images, 500 train / 50 val per class.
+    Expects data_dir to have train/ and val/ subdirectories, each with per-class subfolders.
+    """
+    mean = [0.4802, 0.4481, 0.3975]
+    std  = [0.2770, 0.2691, 0.2821]
+
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(64, padding=8),
+        transforms.RandomHorizontalFlip(),
+        transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.IMAGENET),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
+    val_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean, std),
+    ])
+
+    train_dataset = datasets.ImageFolder(root=os.path.join(data_dir, 'train'), transform=train_transform)
+    val_dataset   = datasets.ImageFolder(root=os.path.join(data_dir, 'val'),   transform=val_transform)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=True, prefetch_factor=2)
+    return train_loader, val_loader
+
 
 def get_imagenet_loaders(data_dir, batch_size=128, num_workers=8):
     train_transform = transforms.Compose([

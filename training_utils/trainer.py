@@ -2,6 +2,7 @@ import os
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import torch
+from torch.amp import autocast
 from typing import List, Callable, Tuple
 
 class Trainer:
@@ -18,7 +19,8 @@ class Trainer:
 				 checkpoint_dir: str = 'checkpoints',
 				 device: str = None,
 				 model_modify_fns: List[Callable] = None,
-				 model_modify_iters: int = None):
+				 model_modify_iters: int = None,
+				 use_amp: bool = True):
 		self.device = device if device is not None else (torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 		self.model = model.to(self.device)
 		self.optimizers = optimizers
@@ -32,6 +34,8 @@ class Trainer:
 		self.checkpoint_dir = checkpoint_dir
 		self.model_modify_fns = model_modify_fns if model_modify_fns is not None else []
 		self.model_modify_iters = model_modify_iters
+		self.use_amp = use_amp and torch.cuda.is_available()
+		self.scaler = None  # Not needed for bfloat16
 		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 	def train(self):
@@ -45,13 +49,14 @@ class Trainer:
 				inputs, targets = batch
 				inputs = inputs.to(self.device)
 				targets = targets.to(self.device)
-				outputs = self.model(inputs)
-				# Weighted sum of all losses
-				total_loss = 0.0
-				for loss_fn, weight in self.loss_fns:
-					total_loss = total_loss + weight * loss_fn(outputs, targets)
 				for opt in self.optimizers:
 					opt.zero_grad()
+				with autocast('cuda', dtype=torch.bfloat16, enabled=self.use_amp):
+					outputs = self.model(inputs)
+					# Weighted sum of all losses
+					total_loss = 0.0
+					for loss_fn, weight in self.loss_fns:
+						total_loss = total_loss + weight * loss_fn(outputs, targets)
 				total_loss.backward()
 				for opt in self.optimizers:
 					opt.step()

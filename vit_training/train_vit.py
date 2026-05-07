@@ -7,10 +7,44 @@ from models.BP_ViT import BPVit
 import torch
 from torchvision.models import vit_b_16
 from training_utils.trainer import Trainer
-from training_utils.data_loader_factory import get_cifar10_loaders, get_cifar100_loaders, get_imagenet_loaders
+from training_utils.data_loader_factory import get_cifar10_loaders, get_cifar100_loaders, get_imagenet_loaders, get_tiny_imagenet_loaders, get_imagenet100_loaders
 import torch.nn as nn
 import torch.optim as optim
 from timm.models.vision_transformer import VisionTransformer
+
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.set_float32_matmul_precision("high")
+
+def get_param_groups(named_params, weight_decay, no_wd_bias_norm=False):
+    """
+    Split parameters into two groups:
+      - decay group:    all weight matrices (weight decay applied)
+      - no-decay group: biases + norm layer weights/biases (no weight decay)
+
+    If no_wd_bias_norm=False, returns a single flat list (all params get weight_decay).
+    """
+    if not no_wd_bias_norm:
+        return [p for _, p in named_params]
+
+    decay, no_decay = [], []
+    no_decay_names = []
+    for name, param in named_params:
+        if not param.requires_grad:
+            continue
+        # Exclude biases, 1-D params (LayerNorm weight/bias, etc.),
+        # and ViT-specific embeddings (cls_token, pos_embed)
+        if param.ndim == 1 or name.endswith('.bias') or 'cls_token' in name or 'pos_embed' in name:
+            no_decay.append(param)
+            no_decay_names.append(name)
+        else:
+            decay.append(param)
+
+    print(f"  param groups — decay: {len(decay)}, no-decay: {len(no_decay)} {no_decay_names[:5]}{'...' if len(no_decay_names)>5 else ''}")
+    return [
+        {'params': decay,    'weight_decay': weight_decay},
+        {'params': no_decay, 'weight_decay': 0.0},
+    ]
 
 def replace_linear(module, new_linear_cls, **kwargs):
     for name, child in module.named_children():
@@ -38,7 +72,8 @@ def replace_linear(module, new_linear_cls, **kwargs):
 
 def reinitialize_pq_layers(trainer, r=None):
     """Reinitialize P and Q matrices for all rAFA layers in the model and clear qp_optimizer state"""
-    for module in trainer.model.modules():
+    model = getattr(trainer.model, '_orig_mod', trainer.model)
+    for module in model.modules():
         if hasattr(module, 'init_svd_approx'):
             module.init_svd_approx()
     # Clear qp_optimizer state (assume it's the second optimizer in the list)
@@ -95,6 +130,7 @@ def main():
     num_epochs = config.get('num_epochs', 150)
     lr = config.get('learning_rate', 3e-4)
     weight_decay = config.get('weight_decay', 1e-4)
+    no_wd_bias_norm = config.get('no_wd_bias_norm', False)
     eta_min = config.get('eta_min', 1e-6)
     qp_eta_min = config.get('qp_eta_min', 1e-6)
 
@@ -132,6 +168,14 @@ def main():
         train_loader, test_loader = get_cifar10_loaders(batch_size=batch_size, root='./data', num_workers=12)
     elif dataset.lower() == 'cifar100':
         train_loader, test_loader = get_cifar100_loaders(batch_size=batch_size, root='./data', num_subset_classes=num_subset_classes)
+    elif dataset.lower() == 'tiny_imagenet':
+        tiny_imagenet_dir = config.get('data_dir', './data/tiny-imagenet-200')
+        train_loader, test_loader = get_tiny_imagenet_loaders(data_dir=tiny_imagenet_dir, batch_size=batch_size)
+    elif dataset.lower() == 'imagenet100':
+        imagenet_dir = config.get('data_dir', '/home/maherhanut/Documents/data/imagenet')
+        class_list_file = config.get('class_list_file', './data/imagenet100_classes.txt')
+        train_loader, test_loader = get_imagenet100_loaders(
+            data_dir=imagenet_dir, batch_size=batch_size, class_list_file=class_list_file)
     elif dataset.lower() == 'imagenet':
         # You may want to set the path in your config as 'imagenet_dir'
         imagenet_dir = config.get('imagenet_dir', '/home/maherhanut/Documents/data/imagenet')
@@ -157,6 +201,7 @@ def main():
     else:
         replace_linear(model, BP_Linear)
     model = model.to(device)
+    model = torch.compile(model)
 
     print('*******', use_ldfa_linear, "###########")
 
@@ -177,15 +222,16 @@ def main():
     if use_ldfa_linear:
         # modifiable_modules = [module for module in model.modules() if hasattr(module, 'init_svd_approx')]
         qp_params = []
-        model_params = []
+        model_named_params = []
             
         for name, param in model.named_parameters():
             if 'P' in name or 'Q' in name:
                 qp_params.append(param)
             else:
-                model_params.append(param)
+                model_named_params.append((name, param))
 
-        model_optimizer = optim.AdamW(model_params, lr=lr, weight_decay=weight_decay)
+        model_pg = get_param_groups(model_named_params, weight_decay, no_wd_bias_norm)
+        model_optimizer = optim.AdamW(model_pg, lr=lr, weight_decay=weight_decay)
         qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
 
         warmup_scheduler = torch.optim.lr_scheduler.LinearLR(model_optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
@@ -213,7 +259,8 @@ def main():
 
     else:
 
-        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        model_pg = get_param_groups(model.named_parameters(), weight_decay, no_wd_bias_norm)
+        optimizer = optim.AdamW(model_pg, lr=lr, weight_decay=weight_decay)
 
         warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
         main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=eta_min)
