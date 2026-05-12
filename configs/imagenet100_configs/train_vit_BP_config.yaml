@@ -2,8 +2,8 @@
 
 batch_size: 512
 num_epochs: 300
-learning_rate: 0.0001 #0.0005
-weight_decay: 0.05
+learning_rate: 0.0005 #0.0005
+weight_decay: 0.5
 eta_min: 0.00001
 
 use_ldfa_linear: False
@@ -26,4 +26,4 @@ class_list_file: ./data/imagenet100_classes.txt
 image_size: 160
 num_classes: 100
 model_name: vit_b_16
-log_name: BP_lr1e3_wd5e2_bs_512_eta_min_1e5
+log_name: BP_lr5e3_wd5e1_bs_512_eta_min_1e5_300_epochs
