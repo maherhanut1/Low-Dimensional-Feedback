@@ -1,11 +1,13 @@
 import argparse
 import yaml
 import os
+from functools import partial
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
 from models.BP_ViT import BPVit
 import torch
 from torchvision.models import vit_b_16
+from torchvision.transforms import v2 as T2
 from training_utils.trainer import Trainer
 from training_utils.data_loader_factory import get_cifar10_loaders, get_cifar100_loaders, get_imagenet_loaders, get_tiny_imagenet_loaders, get_imagenet100_loaders
 import torch.nn as nn
@@ -128,16 +130,22 @@ def main():
     dataset = config.get('dataset', 'cifar10')
     batch_size = config.get('batch_size', 128)
     num_epochs = config.get('num_epochs', 150)
-    lr = config.get('learning_rate', 3e-4)
-    weight_decay = config.get('weight_decay', 1e-4)
+    lr = float(config.get('learning_rate', 3e-4))
+    weight_decay = float(config.get('weight_decay', 1e-4))
     no_wd_bias_norm = config.get('no_wd_bias_norm', False)
-    eta_min = config.get('eta_min', 1e-6)
-    qp_eta_min = config.get('qp_eta_min', 1e-6)
+    eta_min = float(config.get('eta_min', 1e-6))
+    qp_eta_min = float(config.get('qp_eta_min', 1e-6))
+    warmup_epochs = config.get('warmup_epochs', 10)
+
+    # Mixup / CutMix / Label smoothing
+    mixup_alpha    = float(config.get('mixup_alpha', 0.0))
+    cutmix_alpha   = float(config.get('cutmix_alpha', 0.0))
+    label_smoothing = float(config.get('label_smoothing', 0.0))
 
     use_ldfa_linear = config.get('use_ldfa_linear', True)
     ldfa_rank = config.get('ldfa_rank', 32)
-    qp_lr = config.get('qp_lr', lr)
-    qp_weight_decay = config.get('qp_weight_decay', weight_decay)
+    qp_lr = float(config.get('qp_lr', lr))
+    qp_weight_decay = float(config.get('qp_weight_decay', weight_decay))
     model_name = config.get('model_name', 'vit_b_16')
     image_size = config.get('image_size', 32)
     num_classes = config.get('num_classes', 10)
@@ -177,11 +185,21 @@ def main():
         train_loader, test_loader = get_imagenet100_loaders(
             data_dir=imagenet_dir, batch_size=batch_size, class_list_file=class_list_file)
     elif dataset.lower() == 'imagenet':
-        # You may want to set the path in your config as 'imagenet_dir'
         imagenet_dir = config.get('imagenet_dir', '/home/maherhanut/Documents/data/imagenet')
         train_loader, test_loader = get_imagenet_loaders(data_dir=imagenet_dir, batch_size=batch_size)
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
+
+    # --- Mixup / CutMix (applied as a batch-level transform on GPU) ---
+    mixup_cutmix_transforms = []
+    if mixup_alpha > 0.0:
+        mixup_cutmix_transforms.append(T2.MixUp(alpha=mixup_alpha, num_classes=num_classes))
+    if cutmix_alpha > 0.0:
+        mixup_cutmix_transforms.append(T2.CutMix(alpha=cutmix_alpha, num_classes=num_classes))
+    if mixup_cutmix_transforms:
+        mixup_cutmix_fn = T2.RandomChoice(mixup_cutmix_transforms)
+    else:
+        mixup_cutmix_fn = None
 
     model = VisionTransformer(img_size=image_size,
                               patch_size=patch_size,
@@ -205,8 +223,25 @@ def main():
 
     print('*******', use_ldfa_linear, "###########")
 
-    # Loss and optimizer
-    loss_fns = [(nn.CrossEntropyLoss(), 1.0)]
+    # Loss — soft targets when Mixup/CutMix active, label smoothing always
+    base_criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    if mixup_cutmix_fn is not None:
+        # During training targets are soft (B, C) from Mixup/CutMix;
+        # during validation targets are hard (B,) integer indices — handle both.
+        def soft_ce(outputs, targets):
+            log_probs = torch.nn.functional.log_softmax(outputs, dim=-1)
+            if targets.dim() == 1:
+                # Hard labels (validation) — delegate to standard CE
+                return base_criterion(outputs, targets)
+            # Soft labels (training with Mixup/CutMix)
+            loss = -(targets * log_probs).sum(dim=-1).mean()
+            if label_smoothing > 0:
+                smooth_loss = -log_probs.mean(dim=-1).mean()
+                loss = (1 - label_smoothing) * loss + label_smoothing * smooth_loss
+            return loss
+        loss_fns = [(soft_ce, 1.0)]
+    else:
+        loss_fns = [(base_criterion, 1.0)]
 
     # Metrics
     metrics = [accuracy_metric,
@@ -220,7 +255,6 @@ def main():
 
 
     if use_ldfa_linear:
-        # modifiable_modules = [module for module in model.modules() if hasattr(module, 'init_svd_approx')]
         qp_params = []
         model_named_params = []
             
@@ -230,45 +264,43 @@ def main():
             else:
                 model_named_params.append((name, param))
 
+        warmup_steps = warmup_epochs * len(train_loader)
+
         model_pg = get_param_groups(model_named_params, weight_decay, no_wd_bias_norm)
         model_optimizer = optim.AdamW(model_pg, lr=lr, weight_decay=weight_decay)
         qp_optimizer = optim.AdamW(qp_params, lr=qp_lr, weight_decay=qp_weight_decay)
 
-        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(model_optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
-        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=eta_min)
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            model_optimizer, start_factor=1/warmup_epochs, end_factor=1.0, total_iters=warmup_steps)
+        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            model_optimizer, T_max=(num_epochs - warmup_epochs) * len(train_loader), eta_min=eta_min)
         model_scheduler = torch.optim.lr_scheduler.SequentialLR(
-            model_optimizer,
-            schedulers=[warmup_scheduler, main_scheduler],
-            milestones=[10 * len(train_loader)]
-        )
+            model_optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[warmup_steps])
 
-
-        qp_warmup_scheduler = torch.optim.lr_scheduler.LinearLR(qp_optimizer, start_factor=1/10, end_factor=1.0, total_iters=10 * len(train_loader))
-        qp_main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(qp_optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=qp_eta_min)
-
+        qp_warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            qp_optimizer, start_factor=1/warmup_epochs, end_factor=1.0, total_iters=warmup_steps)
+        qp_main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            qp_optimizer, T_max=(num_epochs - warmup_epochs) * len(train_loader), eta_min=qp_eta_min)
         qp_scheduler = torch.optim.lr_scheduler.SequentialLR(
-            qp_optimizer,
-            schedulers=[qp_warmup_scheduler, qp_main_scheduler],
-            milestones=[10 * len(train_loader)]
-        )
+            qp_optimizer, schedulers=[qp_warmup_scheduler, qp_main_scheduler], milestones=[warmup_steps])
 
         optimizers = [model_optimizer, qp_optimizer]
         schedulers = [model_scheduler, qp_scheduler]
         modify_funcs = [lambda trainer: reinitialize_pq_layers(trainer, 0.5)]
-        modification_rate = len(train_loader) // 2  # Reinit every half epoch
+        modification_rate = len(train_loader) // 2
 
     else:
+        warmup_steps = warmup_epochs * len(train_loader)
 
         model_pg = get_param_groups(model.named_parameters(), weight_decay, no_wd_bias_norm)
         optimizer = optim.AdamW(model_pg, lr=lr, weight_decay=weight_decay)
 
-        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=1/25, end_factor=1.0, total_iters=10 * len(train_loader))
-        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = (num_epochs - 10) * len(train_loader), eta_min=eta_min)
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1/warmup_epochs, end_factor=1.0, total_iters=warmup_steps)
+        main_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=(num_epochs - warmup_epochs) * len(train_loader), eta_min=eta_min)
         scheduler = torch.optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[warmup_scheduler, main_scheduler],
-            milestones=[10 * len(train_loader)]
-        )
+            optimizer, schedulers=[warmup_scheduler, main_scheduler], milestones=[warmup_steps])
 
         schedulers = [scheduler]
         optimizers = [optimizer]
@@ -291,7 +323,8 @@ def main():
         model_modify_iters=modification_rate,
         log_dir=log_dir,
         checkpoint_dir=checkpoint_dir,
-        device=device
+        device=device,
+        mixup_cutmix_fn=mixup_cutmix_fn,
     )
     trainer.train()
 

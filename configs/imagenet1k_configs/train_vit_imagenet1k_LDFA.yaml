@@ -1,0 +1,51 @@
+# ViT-Base on full ImageNet-1K — LDFA
+# Follows DeiT-Base training recipe
+
+dataset:    imagenet
+imagenet_dir: /home/maherhanut/Documents/data/imagenet
+num_classes: 1000
+image_size:  224
+
+# Model (ViT-Base)
+model_name:     vit_b_16
+patch_size:     16
+in_chans:       3
+embed_dim:      768
+depth:          12
+num_heads:      12
+mlp_ratio:      4.0
+qkv_bias:       true
+drop_rate:      0.0
+attn_drop_rate: 0.0
+drop_path_rate: 0.1
+
+# Training
+batch_size:    128
+num_epochs:    300
+warmup_epochs: 5
+
+# Optimizer (main weights)
+# lr = 1e-3 * batch_size / 1024  — set explicitly here for your batch size
+learning_rate: 1e-3
+weight_decay:  0.05
+no_wd_bias_norm: true
+eta_min:       1e-5
+
+# Regularization / Augmentation
+mixup_alpha:     0.8
+cutmix_alpha:    1.0
+label_smoothing: 0.1
+# RandAugment and RandomErasing are in the dataloader (num_ops=2, mag=9, erasing_p=0.25)
+
+# LDFA
+use_ldfa_linear: true
+ldfa_rank:       64
+qp_lr:           1e-3
+qp_weight_decay: 0.05
+qp_eta_min:      1e-5
+
+# Misc
+compile: true
+log_name:       LDFA_r64_imagenet1k
+log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_r64_imagenet1k/logs
+checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_r64_imagenet1k

@@ -20,7 +20,9 @@ class Trainer:
 				 device: str = None,
 				 model_modify_fns: List[Callable] = None,
 				 model_modify_iters: int = None,
-				 use_amp: bool = True):
+				 use_amp: bool = True,
+				 grad_clip: float = None,
+				 mixup_cutmix_fn = None):
 		self.device = device if device is not None else (torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 		self.model = model.to(self.device)
 		self.optimizers = optimizers
@@ -36,6 +38,8 @@ class Trainer:
 		self.model_modify_iters = model_modify_iters
 		self.use_amp = use_amp and torch.cuda.is_available()
 		self.scaler = None  # Not needed for bfloat16
+		self.grad_clip = grad_clip
+		self.mixup_cutmix_fn = mixup_cutmix_fn
 		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 	def train(self):
@@ -49,22 +53,27 @@ class Trainer:
 				inputs, targets = batch
 				inputs = inputs.to(self.device)
 				targets = targets.to(self.device)
+
+				# Apply Mixup / CutMix if configured (no-op when mixup_cutmix_fn is None)
+				if self.mixup_cutmix_fn is not None:
+					inputs, targets = self.mixup_cutmix_fn(inputs, targets)
+
 				for opt in self.optimizers:
 					opt.zero_grad()
 				with autocast('cuda', dtype=torch.bfloat16, enabled=self.use_amp):
 					outputs = self.model(inputs)
-					# Weighted sum of all losses
 					total_loss = 0.0
 					for loss_fn, weight in self.loss_fns:
 						total_loss = total_loss + weight * loss_fn(outputs, targets)
 				total_loss.backward()
+				if self.grad_clip is not None:
+					torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
 				for opt in self.optimizers:
 					opt.step()
 				for sch in self.schedulers:
 					if hasattr(sch, 'step'):
 						sch.step()
 				total_iterations += 1
-				# Call model_modify_fns every model_modify_iters iterations (if set and not zero)
 				if self.model_modify_iters is not None and self.model_modify_iters > 0:
 					if total_iterations % self.model_modify_iters == 0:
 						for fn in self.model_modify_fns:
