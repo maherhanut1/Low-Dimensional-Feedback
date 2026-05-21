@@ -1,12 +1,16 @@
-# Training configuration for ViT on ImageNet-100 - Backpropagation
+# Training configuration for ViT on ImageNet-100 - LDFA rank 64
 
 batch_size: 512
 num_epochs: 350
 learning_rate: 0.0001 #0.0001
-weight_decay: 1.0
+weight_decay: 0.5
 eta_min: 0.00000001 #0.00000001
 
-use_ldfa_linear: False
+use_ldfa_linear: True
+ldfa_rank: 72
+qp_lr: 0.005
+qp_weight_decay: 0.0
+qp_eta_min: 0.001 #0.000000001
 
 # Model specifications (same as CIFAR-10 experiments)
 patch_size: 16
@@ -26,4 +30,4 @@ class_list_file: ./data/imagenet100_classes.txt
 image_size: 224
 num_classes: 100
 model_name: vit_b_16
-log_name: BP_lr1e4_wd1_bs_512_350_epochs_exp_5_eta_min_1e8
+log_name: LDFA_72_lr1e4_wd5e1_bs_512_qplr_1e2_qpetamin_5e3_350_epochs_exp5_eta_min_1e8
