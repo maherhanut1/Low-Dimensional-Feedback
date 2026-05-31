@@ -1,9 +1,10 @@
 import os
+import copy
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import torch
 from torch.amp import autocast
-from typing import List, Callable, Tuple
+from typing import List, Callable, Tuple, Optional
 
 class Trainer:
 	def __init__(self,
@@ -22,7 +23,8 @@ class Trainer:
 				 model_modify_iters: int = None,
 				 use_amp: bool = True,
 				 grad_clip: float = None,
-				 mixup_cutmix_fn = None):
+				 mixup_cutmix_fn = None,
+				 ema_decay: Optional[float] = None):
 		self.device = device if device is not None else (torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 		self.model = model.to(self.device)
 		self.optimizers = optimizers
@@ -40,6 +42,18 @@ class Trainer:
 		self.scaler = None  # Not needed for bfloat16
 		self.grad_clip = grad_clip
 		self.mixup_cutmix_fn = mixup_cutmix_fn
+		# EMA setup — only active when ema_decay is provided
+		self.ema_decay = ema_decay
+		if ema_decay is not None:
+			# Unwrap torch.compile wrapper (_orig_mod) before deepcopying,
+			# so EMA parameters align 1-to-1 with the real nn.Module parameters
+			unwrapped = getattr(self.model, '_orig_mod', self.model)
+			self.ema_model = copy.deepcopy(unwrapped)
+			self.ema_model.eval()
+			for p in self.ema_model.parameters():
+				p.requires_grad_(False)
+		else:
+			self.ema_model = None
 		os.makedirs(self.checkpoint_dir, exist_ok=True)
 
 	def train(self):
@@ -73,6 +87,12 @@ class Trainer:
 				for sch in self.schedulers:
 					if hasattr(sch, 'step'):
 						sch.step()
+				# Update EMA weights after each optimizer step
+				if self.ema_model is not None:
+					with torch.no_grad():
+						unwrapped = getattr(self.model, '_orig_mod', self.model)
+						for ema_p, model_p in zip(self.ema_model.parameters(), unwrapped.parameters()):
+							ema_p.data.mul_(self.ema_decay).add_(model_p.data, alpha=1.0 - self.ema_decay)
 				total_iterations += 1
 				if self.model_modify_iters is not None and self.model_modify_iters > 0:
 					if total_iterations % self.model_modify_iters == 0:
@@ -105,6 +125,8 @@ class Trainer:
 			'optimizer_state_dict': [opt.state_dict() for opt in self.optimizers],
 			'iteration': iteration
 		}
+		if self.ema_model is not None:
+			checkpoint['ema_model_state_dict'] = self.ema_model.state_dict()
 		path = os.path.join(self.checkpoint_dir, f'checkpoint_{iteration}.pt')
 		torch.save(checkpoint, path)
 
@@ -120,14 +142,22 @@ class Trainer:
 			self.writer.add_scalar(f'eval/metric_{name}', value, iteration)
 		self.writer.add_scalar('eval/total_loss', eval_metrics['total_loss'], iteration)
 
+		# Log EMA metrics on test data (only when EMA is enabled)
+		if self.ema_model is not None:
+			ema_eval_metrics = self._compute_metrics_and_loss(self.test_loader, model=self.ema_model)
+			for name, value in ema_eval_metrics['metrics'].items():
+				self.writer.add_scalar(f'eval_ema/metric_{name}', value, iteration)
+			self.writer.add_scalar('eval_ema/total_loss', ema_eval_metrics['total_loss'], iteration)
+
 		# Log metrics and loss on training data
 		train_metrics = self._compute_metrics_and_loss(self.train_loader)
 		for name, value in train_metrics['metrics'].items():
 			self.writer.add_scalar(f'train/metric_{name}', value, iteration)
 		self.writer.add_scalar('train/total_loss', train_metrics['total_loss'], iteration)
 
-	def _compute_metrics_and_loss(self, loader):
-		self.model.eval()
+	def _compute_metrics_and_loss(self, loader, model=None):
+		eval_model = model if model is not None else self.model
+		eval_model.eval()
 		total_loss = 0.0
 		total_batches = 0
 		all_outputs = []
@@ -138,7 +168,7 @@ class Trainer:
 				inputs, targets = batch
 				inputs = inputs.to(self.device)
 				targets = targets.to(self.device)
-				outputs = self.model(inputs)
+				outputs = eval_model(inputs)
 				batch_loss = 0.0
 				for loss_fn, weight in self.loss_fns:
 					batch_loss = batch_loss + weight * loss_fn(outputs, targets)
@@ -155,7 +185,7 @@ class Trainer:
 			try:
 				value, name = metric_fn(all_outputs, all_targets)
 			except TypeError:
-				value, name = metric_fn(loader, self.model)
+				value, name = metric_fn(loader, eval_model)
 			metrics_results[name] = value
 		avg_loss = total_loss / max(total_batches, 1)
 		return {'total_loss': avg_loss, 'metrics': metrics_results}

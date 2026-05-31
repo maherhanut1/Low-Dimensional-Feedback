@@ -151,6 +151,13 @@ def main():
     num_classes = config.get('num_classes', 10)
     num_subset_classes = config.get('num_subset_classes', None)  # For CIFAR-100 subset
     log_name = config.get('log_name', 'default_run')
+    grad_clip = config.get('grad_clip', None)
+    if grad_clip is not None:
+        grad_clip = float(grad_clip)
+
+    use_ema = config.get('use_ema', False)
+    ema_decay = float(config.get('ema_decay', 0.9999)) if use_ema else None
+    num_workers = config.get('num_workers', 16)
 
     #load model parameters
     patch_size = config.get('patch_size')
@@ -186,7 +193,7 @@ def main():
             data_dir=imagenet_dir, batch_size=batch_size, class_list_file=class_list_file)
     elif dataset.lower() == 'imagenet':
         imagenet_dir = config.get('imagenet_dir', '/home/maherhanut/Documents/data/imagenet')
-        train_loader, test_loader = get_imagenet_loaders(data_dir=imagenet_dir, batch_size=batch_size)
+        train_loader, test_loader = get_imagenet_loaders(data_dir=imagenet_dir, batch_size=batch_size, num_workers=num_workers)
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
 
@@ -325,6 +332,8 @@ def main():
         checkpoint_dir=checkpoint_dir,
         device=device,
         mixup_cutmix_fn=mixup_cutmix_fn,
+        grad_clip=grad_clip,
+        ema_decay=ema_decay,
     )
     trainer.train()
 

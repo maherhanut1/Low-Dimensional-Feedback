@@ -38,16 +38,21 @@ label_smoothing: 0.1
 # RandAugment and RandomErasing are in the dataloader (num_ops=2, mag=9, erasing_p=0.25)
 
 # LDFA
-use_ldfa_linear: false
+# LDFA
+use_ldfa_linear: true
+ldfa_rank:       128
+qp_lr:           1e-2 # 5e3 default
+qp_weight_decay: 0.05
+qp_eta_min:      1e-3 #1e3 default
 
 # EMA (Exponential Moving Average of model weights)
 # Set use_ema: true to enable; has no effect on previous runs when false
 use_ema:       true
-ema_decay:     0.99996   # DeiT base decay; effective decay at bs=512 is ~0.99998 (= 1 - (1-0.99996)*(512/1024))
+ema_decay:     0.99996  # DeiT base decay; effective decay at bs=512 is ~0.99998 (= 1 - (1-0.99996)*(512/1024))
 
 # Misc
 compile: true
-num_workers: 12         # increase if GPU is starved (check with nvidia-smi; aim for >90% utilization)
-log_name:       BP_imagenet1k_EMA
-log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/BP_imagenet1k/logs
-checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/BP_imagenet1k
+num_workers: 8         # increase if GPU is starved (check with nvidia-smi; aim for >90% utilization)
+log_name:       LDFA_128_imagenet1k_EMA_qp_5e2_qpmin_1e2_exp1
+log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k/logs
+checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k

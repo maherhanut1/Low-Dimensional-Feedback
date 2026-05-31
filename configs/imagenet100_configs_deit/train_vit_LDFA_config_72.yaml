@@ -1,13 +1,12 @@
-# ViT-Base on full ImageNet-1K — LDFA
 # Follows DeiT-Base training recipe
-
-dataset:    imagenet
-imagenet_dir: /home/maherhanut/Documents/data/imagenet
-num_classes: 1000
+dataset: imagenet100
+data_dir: ~/data/imagenet
+class_list_file: ./data/imagenet100_classes.txt
+num_classes: 100
 image_size:  224
 
 # Model (ViT-Base)
-model_name:     vit_b_16
+model_name:     vit_b_16_deit
 patch_size:     16
 in_chans:       3
 embed_dim:      768
@@ -20,13 +19,13 @@ attn_drop_rate: 0.0
 drop_path_rate: 0.1
 
 # Training
-batch_size:    128
+batch_size:    512
 num_epochs:    300
 warmup_epochs: 5
 
-# Optimizer (main weights)
-# lr = 1e-3 * batch_size / 1024  — set explicitly here for your batch size
-learning_rate: 1e-3
+# Optimizer
+learning_rate: 5e-4     # DeiT: lr = base_lr * batch_size / 512 = 5e-4 * 128/512 * ... 
+                        # standard is 1e-3 at batch 1024; scale accordingly
 weight_decay:  0.05
 no_wd_bias_norm: true
 eta_min:       1e-5
@@ -39,13 +38,13 @@ label_smoothing: 0.1
 
 # LDFA
 use_ldfa_linear: true
-ldfa_rank:       64
-qp_lr:           1e-3
+ldfa_rank:       72
+qp_lr:           2.5e-3 # 5e3 default
 qp_weight_decay: 0.05
-qp_eta_min:      1e-5
+qp_eta_min:      1e-3 #1e3 default
 
 # Misc
 compile: true
-log_name:       LDFA_r64_imagenet1k
-log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_r64_imagenet1k/logs
-checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_r64_imagenet1k
+grad_clip: 1.0
+log_name:       LDFA_72_imagenet100v2_lr5e4_jitters_qp_2_5e3_withoutx3_exp1
+log_dir:        LDFA_72_imagenet100v2/logs

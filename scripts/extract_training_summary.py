@@ -46,11 +46,11 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                 # Extract metrics
                 acc_steps = acc_data['steps']
                 acc_values = acc_data['values']
-                
+
                 max_acc_idx = np.argmax(acc_values)
                 max_acc = acc_values[max_acc_idx]
                 max_acc_step = acc_steps[max_acc_idx]
-                
+
                 last_acc = acc_values[-1]
                 last_step = acc_steps[-1]
                 
@@ -67,11 +67,23 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                 else:
                     max_top2 = max_top2_step = last_top2 = 'N/A'
                 
-                # Find step where accuracy reached 90% of final/last accuracy
-                target_acc = 0.9 * last_acc
-                step_90pct_last = None
+                # Find step where accuracy first reached its maximum value
+                target_acc = max_acc
+                step_to_max = None
+                for s, v in zip(acc_steps, acc_values):
+                    if v >= target_acc:
+                        step_to_max = s
+                        break
 
-                
+                # Find step where accuracy first reached 90% of final/last accuracy
+                target_acc_90 = 0.9 * last_acc
+                step_90pct_last = None
+                for s, v in zip(acc_steps, acc_values):
+                    if v >= target_acc_90:
+                        step_90pct_last = s
+                        break
+
+
                 # Get absolute time from event files
                 ea = EventAccumulator(str(exp_folder) + '/logs')
                 ea.Reload()
@@ -92,6 +104,7 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                     'Last_Epoch_Acc_Top2': f"{last_top2:.4f}" if last_top2 != 'N/A' else 'N/A',
                     'Last_Epoch_Step': last_step,
                     'Last_Epoch_Time': last_time,
+                    'Step_to_Max': step_to_max if step_to_max is not None else 'N/A',
                     'Step_90pct_Last': step_90pct_last if step_90pct_last is not None else 'N/A'
                 })
                 
@@ -106,7 +119,7 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
         fieldnames = ['Task', 'Exp_Number', 'Max_Val_Acc_Top1', 'Max_Val_Acc_Top1_Step', 
                       'Max_Val_Acc_Top2', 'Max_Val_Acc_Top2_Step',
                       'Last_Epoch_Acc_Top1', 'Last_Epoch_Acc_Top2', 
-                      'Last_Epoch_Step', 'Last_Epoch_Time', 'Step_90pct_Last']
+                      'Last_Epoch_Step', 'Last_Epoch_Time', 'Step_to_Max', 'Step_90pct_Last']
         
         with open(output_csv, 'w', newline='') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -137,19 +150,32 @@ def load_tensorboard_data(log_dir, metrics=['eval/metric_accuracy', 'eval/metric
     return data
 
 
-def parse_experiment_folders(base_dir):
-    """Parse experiment folders and group by task name."""
+def parse_experiment_folders(base_dir, ignore_patterns=None):
+    """Parse experiment folders and group by task name.
+    
+    Args:
+        base_dir: Base directory containing experiment folders
+        ignore_patterns: List of substrings; folders containing any of these will be skipped
+    """
     base_path = Path(base_dir)
     if not base_path.exists():
         raise FileNotFoundError(f"Base directory not found: {base_dir}")
     
+    if ignore_patterns is None:
+        ignore_patterns = []
+
     experiments = defaultdict(list)
     
-    # Pattern to match task_name_exp_number
-    pattern = re.compile(r'^(.+)_exp_(\d+)$')
+    # Support both _exp_N and _expN naming conventions
+    pattern = re.compile(r'^(.+?)_exp_?(\d+)$')
     
     for folder in base_path.iterdir():
         if folder.is_dir():
+            # Skip folders matching any ignore pattern
+            if any(pat in folder.name for pat in ignore_patterns):
+                print(f"Ignoring folder (matches ignore pattern): {folder.name}")
+                continue
+
             match = pattern.match(folder.name)
             if match:
                 task_name = match.group(1)
@@ -173,6 +199,8 @@ def main():
     parser.add_argument('--output_dir', type=str, 
                         default='experiment_plots',
                         help='Directory to save output CSV')
+    parser.add_argument('--ignore', type=str, nargs='*', default=[],
+                        help='Substrings to ignore in folder names (e.g. no_X3)')
     args = parser.parse_args()
     
     # Configuration
@@ -185,7 +213,7 @@ def main():
     print(f"Loading experiments from: {base_dir}")
     
     # Parse experiment folders
-    experiments = parse_experiment_folders(base_dir)
+    experiments = parse_experiment_folders(base_dir, ignore_patterns=args.ignore)
     
     print(f"Found {len(experiments)} different tasks:")
     for task_name, exp_list in experiments.items():

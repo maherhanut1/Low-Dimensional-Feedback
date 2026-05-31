@@ -54,7 +54,7 @@ def load_tensorboard_data(log_dir, metrics=['eval/metric_accuracy', 'eval/metric
     return data
 
 
-def parse_experiment_folders(base_dir):
+def parse_experiment_folders(base_dir, ignore_patterns=None):
     """Parse experiment folders and group by task name."""
     base_path = Path(base_dir)
     if not base_path.exists():
@@ -62,8 +62,8 @@ def parse_experiment_folders(base_dir):
     
     experiments = defaultdict(list)
     
-    # Pattern to match task_name_exp_number
-    pattern = re.compile(r'^(.+)_exp_(\d+)$')
+    # Support both _exp_N and _expN naming conventions
+    pattern = re.compile(r'^(.+?)_exp_?(\d+)$')
     
     for folder in base_path.iterdir():
         if folder.is_dir():
@@ -71,6 +71,10 @@ def parse_experiment_folders(base_dir):
             if match:
                 task_name = match.group(1)
                 exp_number = int(match.group(2))
+                # Skip folders matching any ignore pattern
+                if ignore_patterns and any(p in task_name for p in ignore_patterns):
+                    print(f"Ignoring folder: {folder.name}")
+                    continue
                 experiments[task_name].append((exp_number, folder))
             else:
                 print(f"Skipping folder with unexpected format: {folder.name}")
@@ -334,6 +338,8 @@ def main():
     parser.add_argument('--output_dir', type=str, 
                         default='experiment_plots',
                         help='Directory to save output plots')
+    parser.add_argument('--ignore', type=str, nargs='*', default=[],
+                        help='Substrings: skip task names containing any of these')
     args = parser.parse_args()
     
     # Configuration
@@ -344,7 +350,7 @@ def main():
     print(f"Loading experiments from: {base_dir}")
     
     # Parse experiment folders
-    experiments = parse_experiment_folders(base_dir)
+    experiments = parse_experiment_folders(base_dir, ignore_patterns=args.ignore)
     
     print(f"\nFound {len(experiments)} different tasks:")
     for task_name, exp_list in experiments.items():
