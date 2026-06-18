@@ -1,0 +1,20 @@
+batch_size: 256           # profiling batch size (fits in memory during torch.profiler)
+train_batch_size: 1024   # effective training batch size (2 GPUs × 512), used to scale FLOPs
+image_size: 224
+num_classes: 1000
+batches_per_epoch: 1251  # ceil(1_281_167 / 1024)
+device: cuda:0
+dtype: bfloat16
+n_iters: 3
+
+# VisionTransformer model parameters (ViT-Base / DeiT-Base)
+patch_size: 16
+in_chans: 3
+embed_dim: 768
+depth: 12
+num_heads: 12
+mlp_ratio: 4.0
+qkv_bias: true
+drop_rate: 0.0
+attn_drop_rate: 0.0
+drop_path_rate: 0.1

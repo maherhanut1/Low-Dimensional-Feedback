@@ -267,7 +267,8 @@ def get_coco_segmentation_loaders(batch_size=64, root='./data', coco_annFile_tra
     return train_loader, test_loader
 
 def get_imagenet100_loaders(data_dir, batch_size=128, num_workers=16,
-                            class_list_file='./data/imagenet100_classes.txt'):
+                            class_list_file='./data/imagenet100_classes.txt',
+                            color_jitter=0.3):
     """
     Get ImageNet-100 data loaders — a 100-class subset of full ImageNet.
 
@@ -298,7 +299,7 @@ def get_imagenet100_loaders(data_dir, batch_size=128, num_workers=16,
         transforms.RandomResizedCrop(224, scale=(0.08, 1.0), interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.RandomHorizontalFlip(),
         transforms.RandAugment(num_ops=2, magnitude=9),
-        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4),
+        transforms.ColorJitter(brightness=color_jitter, contrast=color_jitter, saturation=color_jitter),
         transforms.ToTensor(),
         transforms.Normalize(mean, std),
         transforms.RandomErasing(p=0.25),
@@ -388,22 +389,45 @@ def get_tiny_imagenet_loaders(data_dir='./data/tiny-imagenet-200', batch_size=12
     return train_loader, val_loader
 
 
-def get_imagenet_loaders(data_dir, batch_size=128, num_workers=8):
+def get_imagenet_loaders(data_dir, batch_size=128, num_workers=16, color_jitter=0.3):
+    """
+    Full ImageNet-1K loader at 224×224 following the DeiT/ViT recipe.
+    Mixup and CutMix are applied in the training loop via torchvision MixUp/CutMix,
+    NOT here — transforms here are purely spatial/colour augmentation.
+
+    Train: RandomResizedCrop(224, BICUBIC) + RandAugment(n=2, m=9)
+           + RandomErasing(p=0.25)
+    Val:   Resize(256, BICUBIC) + CenterCrop(224)
+    """
+    mean = [0.485, 0.456, 0.406]
+    std  = [0.229, 0.224, 0.225]
+
     train_transform = transforms.Compose([
-        transforms.RandomResizedCrop(56, scale=(0.08, 1.0)),
+        transforms.RandomResizedCrop(224, scale=(0.08, 1.0),
+                                     interpolation=transforms.InterpolationMode.BICUBIC),
         transforms.RandomHorizontalFlip(),
-        transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.IMAGENET),
+        transforms.RandAugment(num_ops=2, magnitude=9),
+        transforms.ColorJitter(brightness=color_jitter, contrast=color_jitter, saturation=color_jitter),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Normalize(mean, std),
+        transforms.RandomErasing(p=0.25),
     ])
     val_transform = transforms.Compose([
-        transforms.Resize(64),
-        transforms.CenterCrop(56),
+        transforms.Resize(256, interpolation=transforms.InterpolationMode.BICUBIC),
+        transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        transforms.Normalize(mean, std),
     ])
+
     train_dataset = datasets.ImageFolder(root=f"{data_dir}/train", transform=train_transform)
-    val_dataset = datasets.ImageFolder(root=f"{data_dir}/val", transform=val_transform)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    val_dataset   = datasets.ImageFolder(root=f"{data_dir}/val",   transform=val_transform)
+
+    print(f"ImageNet-1K: {len(train_dataset)} train / {len(val_dataset)} val samples")
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=True,
+                              prefetch_factor=4, persistent_workers=True)
+    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=True,
+                              prefetch_factor=4, persistent_workers=True)
     return train_loader, val_loader

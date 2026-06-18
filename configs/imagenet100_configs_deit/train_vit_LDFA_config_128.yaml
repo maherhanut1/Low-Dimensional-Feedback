@@ -1,0 +1,50 @@
+# Follows DeiT-Base training recipe
+dataset: imagenet100
+data_dir: ~/data/imagenet
+class_list_file: ./data/imagenet100_classes.txt
+num_classes: 100
+image_size:  224
+
+# Model (ViT-Base)
+model_name:     vit_b_16_deit
+patch_size:     16
+in_chans:       3
+embed_dim:      768
+depth:          12
+num_heads:      12
+mlp_ratio:      4.0
+qkv_bias:       true
+drop_rate:      0.0
+attn_drop_rate: 0.0
+drop_path_rate: 0.1
+
+# Training
+batch_size:    512
+num_epochs:    300
+warmup_epochs: 5
+
+# Optimizer
+learning_rate: 5e-4     # DeiT: lr = base_lr * batch_size / 512 = 5e-4 * 128/512 * ... 
+                        # standard is 1e-3 at batch 1024; scale accordingly
+weight_decay:  0.05
+no_wd_bias_norm: true
+eta_min:       1e-5
+
+# Regularization / Augmentation
+mixup_alpha:     0.8
+cutmix_alpha:    1.0
+label_smoothing: 0.1
+# RandAugment and RandomErasing are in the dataloader (num_ops=2, mag=9, erasing_p=0.25)
+
+# LDFA
+use_ldfa_linear: true
+ldfa_rank:       128
+qp_lr:           3e-3 # 5e3 default
+qp_weight_decay: 0.05
+qp_eta_min:      1e-3 #1e3 default
+
+# Misc
+compile: true
+grad_clip: 1.0
+log_name:       LDFA_128_imagenet100v2_lr5e4_jitters_qp_3e3__no_X3_exp5
+log_dir:        LDFA_128_imagenet100v2/logs
