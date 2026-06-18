@@ -45,9 +45,11 @@ use_ldfa_linear: false
 use_ema:       true
 ema_decay:     0.99996   # DeiT base decay; effective decay at bs=512 is ~0.99998 (= 1 - (1-0.99996)*(512/1024))
 
+gpu_ids: [4, ]
+
 # Misc
 compile: true
-num_workers: 12         # increase if GPU is starved (check with nvidia-smi; aim for >90% utilization)
-log_name:       BP_imagenet1k_EMA
+num_workers: 8         # increase if GPU is starved (check with nvidia-smi; aim for >90% utilization)
+log_name:       BP_imagenet1k_EMA_exp3
 log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/BP_imagenet1k/logs
 checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/BP_imagenet1k

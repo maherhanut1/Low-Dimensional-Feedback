@@ -20,9 +20,13 @@ attn_drop_rate: 0.0
 drop_path_rate: 0.1
 
 # Training
-batch_size:    1024
+batch_size:    512       # per-GPU batch; 2 GPUs × 512 = 1024 effective (matches single-GPU BS=1024)
 num_epochs:    300
 warmup_epochs: 5
+
+# Multi-GPU
+gpu_ids: [0, 2]          # run on GPU 0 and GPU 1
+master_port: 12355 #12356        # different port from the other job running on GPUs 2,3 (which uses 12355)
 
 # Optimizer
 learning_rate: 1e-3     # DeiT: lr = base_lr * batch_size / 512 = 5e-4 * 128/512 * ... 
@@ -40,10 +44,41 @@ label_smoothing: 0.1
 # LDFA
 # LDFA
 use_ldfa_linear: true
-ldfa_rank:       128
-qp_lr:           1e-2 # 5e3 default
+# ldfa_rank: 128
+qp_lr:           1e-2
 qp_weight_decay: 0.05
-qp_eta_min:      1e-3 #1e3 default
+qp_eta_min:      1e-3
+
+# Per-layer rank map — add this to override per block
+# SET 1
+ldfa_layer_ranks:
+  0:  192    # keep as BP (standard backprop)
+  1:  192
+  2:  192
+  3:  192
+  4:  192
+  5:  192
+  6:  192
+  7:  192
+  8:  192
+  9:  192
+  10: 192
+  11: 192
+
+# # #SET 2:
+# ldfa_layer_ranks:
+#   0:  64    # keep as BP (standard backprop)
+#   1:  64
+#   2:  96
+#   3:  96
+#   4:  96
+#   5:  96
+#   6:  128
+#   7:  128
+#   8:  192
+#   9:  192
+#   10: -1
+#   11: -1
 
 # EMA (Exponential Moving Average of model weights)
 # Set use_ema: true to enable; has no effect on previous runs when false
@@ -52,7 +87,7 @@ ema_decay:     0.99996  # DeiT base decay; effective decay at bs=512 is ~0.99998
 
 # Misc
 compile: true
-num_workers: 6         # increase if GPU is starved (check with nvidia-smi; aim for >90% utilization)
-log_name:       LDFA_128_imagenet1k_EMA_qp_5e2_qpmin_1e2_exp1
+num_workers: 6         # will be split evenly per GPU process (24 / 2 GPUs = 12 workers each)
+log_name:       LDFA_192_s_imagenet1k_EMA_qp_1e2_qpmin_1e3_2GPUs_node1_exp2
 log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k/logs
 checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k
