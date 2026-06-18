@@ -24,7 +24,10 @@ class Trainer:
 				 use_amp: bool = True,
 				 grad_clip: float = None,
 				 mixup_cutmix_fn = None,
-				 ema_decay: Optional[float] = None):
+				 ema_decay: Optional[float] = None,
+				 rank: int = 0,
+				 train_sampler = None,
+				 eval_train_loader = None):
 		self.device = device if device is not None else (torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
 		self.model = model.to(self.device)
 		self.optimizers = optimizers
@@ -42,6 +45,11 @@ class Trainer:
 		self.scaler = None  # Not needed for bfloat16
 		self.grad_clip = grad_clip
 		self.mixup_cutmix_fn = mixup_cutmix_fn
+		self.rank = rank
+		self.train_sampler = train_sampler
+		# Use a dedicated full-dataset loader for train logging (important in DDP where
+		# train_loader only covers one shard). Falls back to train_loader for single-GPU.
+		self.eval_train_loader = eval_train_loader if eval_train_loader is not None else train_loader
 		# EMA setup — only active when ema_decay is provided
 		self.ema_decay = ema_decay
 		if ema_decay is not None:
@@ -60,6 +68,9 @@ class Trainer:
 		total_iterations = 0
 		num_batches = len(self.train_loader)
 		for epoch in range(self.num_epochs):
+			# Ensure different shuffling per epoch when using DistributedSampler
+			if self.train_sampler is not None:
+				self.train_sampler.set_epoch(epoch)
 			print(f"Epoch {epoch+1}/{self.num_epochs}")
 			self.model.train()
 			pbar = tqdm(enumerate(self.train_loader), total=num_batches, desc=f"Epoch {epoch+1}")
@@ -99,25 +110,19 @@ class Trainer:
 						for fn in self.model_modify_fns:
 							fn(self)
 				pbar.set_postfix({'loss': total_loss.item() if hasattr(total_loss, 'item') else total_loss})
-			# for i, module in enumerate(self.model.modules()):
-			# 	if hasattr(module, "P") and hasattr(module, "Q") and hasattr(module, "weight"):
-			# 		U, S, V = torch.svd(module.weight.data)
-			# 		explained_variance = (S[:module.rank]**2).sum() / (S**2).sum()
-			# 		reconstructed_weight = module.P @ module.Q
-			# 		diff = torch.norm(reconstructed_weight - module.weight).item()
-			# 		self.writer.add_scalar(f'weight_reconstruction_error/{module._get_name()}_{i}', explained_variance, epoch)
-			# End of epoch: evaluate and log
+			# End of epoch: ALL ranks evaluate (keeps them in sync), only rank 0 logs
 			self.log_tensorboard(epoch)
-			if (epoch + 1) % 50 == 0:
+			if self.rank == 0 and (epoch + 1) % 50 == 0:
 				self.save_checkpoint(epoch)
 				
 				
 		print(f"Training complete: {self.num_epochs} epochs, {total_iterations} iterations.")
-		# Final evaluation after all epochs
+		# Final evaluation after all epochs — all ranks participate, rank 0 saves
 		self.log_tensorboard(self.num_epochs-1)
-		self.save_checkpoint(self.num_epochs-1)
-		self.writer.flush()
-		self.writer.close()
+		if self.rank == 0:
+			self.save_checkpoint(self.num_epochs-1)
+			self.writer.flush()
+			self.writer.close()
 
 	def save_checkpoint(self, iteration):
 		checkpoint = {
@@ -131,32 +136,40 @@ class Trainer:
 		torch.save(checkpoint, path)
 
 	def log_tensorboard(self, iteration):
-		# Log learning rate (assume first optimizer and first param group)
-		if self.optimizers:
+		# All ranks run eval (needed for DDP sync), only rank 0 writes to TensorBoard
+
+		# Log learning rate
+		if self.rank == 0 and self.optimizers:
 			lr = self.optimizers[0].param_groups[0]['lr']
 			self.writer.add_scalar('learning_rate', lr, iteration)
 
 		# Log metrics and loss on evaluation (test) data
 		eval_metrics = self._compute_metrics_and_loss(self.test_loader)
-		for name, value in eval_metrics['metrics'].items():
-			self.writer.add_scalar(f'eval/metric_{name}', value, iteration)
-		self.writer.add_scalar('eval/total_loss', eval_metrics['total_loss'], iteration)
+		if self.rank == 0:
+			for name, value in eval_metrics['metrics'].items():
+				self.writer.add_scalar(f'eval/metric_{name}', value, iteration)
+			self.writer.add_scalar('eval/total_loss', eval_metrics['total_loss'], iteration)
 
 		# Log EMA metrics on test data (only when EMA is enabled)
 		if self.ema_model is not None:
 			ema_eval_metrics = self._compute_metrics_and_loss(self.test_loader, model=self.ema_model)
-			for name, value in ema_eval_metrics['metrics'].items():
-				self.writer.add_scalar(f'eval_ema/metric_{name}', value, iteration)
-			self.writer.add_scalar('eval_ema/total_loss', ema_eval_metrics['total_loss'], iteration)
+			if self.rank == 0:
+				for name, value in ema_eval_metrics['metrics'].items():
+					self.writer.add_scalar(f'eval_ema/metric_{name}', value, iteration)
+				self.writer.add_scalar('eval_ema/total_loss', ema_eval_metrics['total_loss'], iteration)
 
 		# Log metrics and loss on training data
-		train_metrics = self._compute_metrics_and_loss(self.train_loader)
-		for name, value in train_metrics['metrics'].items():
-			self.writer.add_scalar(f'train/metric_{name}', value, iteration)
-		self.writer.add_scalar('train/total_loss', train_metrics['total_loss'], iteration)
+		train_metrics = self._compute_metrics_and_loss(self.eval_train_loader)
+		if self.rank == 0:
+			for name, value in train_metrics['metrics'].items():
+				self.writer.add_scalar(f'train/metric_{name}', value, iteration)
+			self.writer.add_scalar('train/total_loss', train_metrics['total_loss'], iteration)
 
 	def _compute_metrics_and_loss(self, loader, model=None):
 		eval_model = model if model is not None else self.model
+		# Unwrap DDP and torch.compile wrappers for clean eval
+		eval_model = getattr(eval_model, 'module', eval_model)   # DDP
+		eval_model = getattr(eval_model, '_orig_mod', eval_model) # torch.compile
 		eval_model.eval()
 		total_loss = 0.0
 		total_batches = 0
