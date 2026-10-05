@@ -1,4 +1,4 @@
-batch_size: 256           # profiling batch size (fits in memory during torch.profiler)
+batch_size: 512           # profiling batch size = per-GPU training batch (2 GPUs × 512)
 train_batch_size: 1024   # effective training batch size (2 GPUs × 512), used to scale FLOPs
 image_size: 224
 num_classes: 1000
