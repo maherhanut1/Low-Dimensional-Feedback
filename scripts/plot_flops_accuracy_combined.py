@@ -193,7 +193,8 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, tra
         rank_raw = row['Rank']
         # Convert rank to int if it's a digit, otherwise keep as string (for 'BP')
         rank = int(rank_raw) if str(rank_raw).isdigit() else rank_raw
-        epochs = row['Mean_Steps_to_90pct']  # These are actually epochs, not batches
+        # TensorBoard step s is logged after s + 1 completed epochs (Trainer.train logs the 0-based epoch index)
+        epochs = row['Mean_Steps_to_90pct'] + 1
         epochs_std = row.get('Std_Steps_to_90pct', 0.0)  # Get std if available
         steps_to_convergence[rank] = epochs
         steps_to_convergence_std[rank] = epochs_std

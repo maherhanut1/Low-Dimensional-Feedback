@@ -425,7 +425,8 @@ def run(detailed_csv, bench_config_path, output_dir, acc_ylim=None, flops_ylim=N
         rows  = gdata['rows']
         accs  = np.array([r['Max_Val_Acc_Top1'] for r in rows])
         top2  = np.array([r['Max_Val_Acc_Top2'] for r in rows])
-        steps = np.array([r['Step_to_Max'] for r in rows])
+        # TensorBoard step s is logged after s + 1 completed epochs (Trainer.train logs the 0-based epoch index)
+        steps = np.array([r['Step_to_Max'] for r in rows]) + 1
         n = len(rows)
         summary[label] = {
             'mean_acc':   float(np.mean(accs)),

@@ -1,8 +1,9 @@
 """
 Plot: FLOPs-to-threshold comparison for ImageNet-1K.
 
-For BP      : FLOPs = Step_to_Max       × FLOPs_per_epoch  (cost to reach BP's own peak)
-For LDFA    : FLOPs = Step_to_Match_BP  × FLOPs_per_epoch  (cost to first match BP's mean peak)
+For BP      : FLOPs = (Step_to_Max + 1)       × FLOPs_per_epoch  (cost to reach BP's own peak)
+For LDFA    : FLOPs = (Step_to_Match_BP + 1)  × FLOPs_per_epoch  (cost to first match BP's mean peak)
+(step s is logged after s + 1 completed epochs)
 
 Step_to_Match_BP is computed by extract_training_summary.py and stored in the CSV.
 Accuracy bars still show each method's own max accuracy.
@@ -128,7 +129,8 @@ def run(detailed_csv, bench_config_path, output_dir,
                       f"(never reached BP threshold), skipping")
                 continue
             s = int(s)
-            steps_list.append(s)
+            # TensorBoard step s is logged after s + 1 completed epochs (Trainer.train logs the 0-based epoch index)
+            steps_list.append(s + 1)
             col_name = 'Step_to_Max' if label == 'BP' else 'Step_to_Match_BP'
             print(f"  [{label}] exp{exp_num}: {col_name} = {s}")
         effective_steps[label] = steps_list
