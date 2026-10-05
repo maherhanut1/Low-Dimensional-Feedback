@@ -43,5 +43,4 @@ use_ema:       false
 
 # Misc
 compile: true
-grad_clip: 1.0
 log_name:       BP_imagenet100_exp1

@@ -47,5 +47,4 @@ use_ema:       false
 
 # Misc
 compile: true
-grad_clip: 1.0
 log_name:       LDFA_128_imagenet100_exp1
