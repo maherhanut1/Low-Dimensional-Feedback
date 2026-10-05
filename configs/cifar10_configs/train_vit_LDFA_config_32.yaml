@@ -1,5 +1,4 @@
 # Training configuration for ViT
-# Example: edit these values as needed
 
 batch_size: 256
 num_epochs: 250
