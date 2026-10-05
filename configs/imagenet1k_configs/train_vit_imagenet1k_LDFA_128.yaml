@@ -1,6 +1,4 @@
-# ViT-Base on full ImageNet-1K — BP (standard backprop)
-# Follows DeiT-Base training recipe
-
+# ViT-B/16 on full ImageNet-1K — LDFA, uniform rank 128 (all 12 blocks)
 dataset:    imagenet
 imagenet_dir: ~/data/imagenet
 num_classes: 1000
@@ -17,20 +15,19 @@ mlp_ratio:      4.0
 qkv_bias:       true
 drop_rate:      0.0
 attn_drop_rate: 0.0
-drop_path_rate: 0.1
+drop_path_rate: 0.0
 
 # Training
-batch_size:    512       # per-GPU batch; 2 GPUs × 512 = 1024 effective (matches single-GPU BS=1024)
+batch_size:    512       # per-GPU batch; 2 GPUs × 512 = 1024 effective
 num_epochs:    300
 warmup_epochs: 5
 
-# Multi-GPU
-gpu_ids: [2, 3]          # run on GPU 0 and GPU 1
-master_port: 12356 #12355        # different port from the other job running on GPUs 2,3 (which uses 12355)
+# Multi-GPU (2 × A100, DDP)
+gpu_ids: [2, 3]
+master_port: 12356
 
-# Optimizer
-learning_rate: 1e-3     # DeiT: lr = base_lr * batch_size / 512 = 5e-4 * 128/512 * ... 
-                        # standard is 1e-3 at batch 1024; scale accordingly
+# Optimizer (forward weights)
+learning_rate: 1e-3     # DeiT scaling: 5e-4 × 1024 / 512
 weight_decay:  0.05
 no_wd_bias_norm: true
 eta_min:       1e-5
@@ -41,18 +38,15 @@ cutmix_alpha:    1.0
 label_smoothing: 0.1
 # RandAugment and RandomErasing are in the dataloader (num_ops=2, mag=9, erasing_p=0.25)
 
-# LDFA
-# LDFA
+# LDFA feedback optimizer (Q, P): AdamW, same 5-epoch linear warmup + cosine schedule as the forward optimizer
 use_ldfa_linear: true
-# ldfa_rank: 128
 qp_lr:           1e-2
-qp_weight_decay: 0.0 #0.05
+qp_weight_decay: 0.05
 qp_eta_min:      1e-3
 
-# Per-layer rank map — add this to override per block
-# SET 1
+# Per-block feedback rank (-1 = standard backprop)
 ldfa_layer_ranks:
-  0:  128    # keep as BP (standard backprop)
+  0:  128
   1:  128
   2:  128
   3:  128
@@ -65,29 +59,10 @@ ldfa_layer_ranks:
   10: 128
   11: 128
 
-# # #SET 2:
-# ldfa_layer_ranks:
-#   0:  64    # keep as BP (standard backprop)
-#   1:  64
-#   2:  96
-#   3:  96
-#   4:  96
-#   5:  96
-#   6:  128
-#   7:  128
-#   8:  192
-#   9:  192
-#   10: -1
-#   11: -1
-
-# EMA (Exponential Moving Average of model weights)
-# Set use_ema: true to enable; has no effect on previous runs when false
-use_ema:       true
-ema_decay:     0.99996  # DeiT base decay; effective decay at bs=512 is ~0.99998 (= 1 - (1-0.99996)*(512/1024))
+# EMA disabled (not part of the reported recipe)
+use_ema:       false
 
 # Misc
 compile: true
-num_workers: 16         # will be split evenly per GPU process (24 / 2 GPUs = 12 workers each)
-log_name:       LDFA_128_imagenet1k_EMA_qp_1e2_qpmin_1e3_2GPUs_node2_exp1_noqpwd_exp3
-log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k/logs
-checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k
+num_workers: 16         # split evenly across the GPU processes
+log_name:       LDFA_128_imagenet1k_exp1

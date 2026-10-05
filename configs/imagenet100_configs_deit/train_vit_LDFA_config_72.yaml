@@ -1,4 +1,4 @@
-# Follows DeiT-Base training recipe
+# ViT-B/16 on ImageNet-100 — LDFA, uniform rank 72
 dataset: imagenet100
 data_dir: ~/data/imagenet
 class_list_file: ./data/imagenet100_classes.txt
@@ -16,16 +16,15 @@ mlp_ratio:      4.0
 qkv_bias:       true
 drop_rate:      0.0
 attn_drop_rate: 0.0
-drop_path_rate: 0.1
+drop_path_rate: 0.0
 
-# Training
+# Training (single A100)
 batch_size:    512
 num_epochs:    300
 warmup_epochs: 5
 
-# Optimizer
-learning_rate: 5e-4     # DeiT: lr = base_lr * batch_size / 512 = 5e-4 * 128/512 * ... 
-                        # standard is 1e-3 at batch 1024; scale accordingly
+# Optimizer (forward weights)
+learning_rate: 5e-4     # DeiT base lr at batch 512
 weight_decay:  0.05
 no_wd_bias_norm: true
 eta_min:       1e-5
@@ -36,15 +35,17 @@ cutmix_alpha:    1.0
 label_smoothing: 0.1
 # RandAugment and RandomErasing are in the dataloader (num_ops=2, mag=9, erasing_p=0.25)
 
-# LDFA
+# LDFA feedback optimizer (Q, P): AdamW, same 5-epoch linear warmup + cosine schedule as the forward optimizer
 use_ldfa_linear: true
 ldfa_rank:       72
-qp_lr:           2.5e-3 # 5e3 default
+qp_lr:           2.5e-3
 qp_weight_decay: 0.05
-qp_eta_min:      1e-3 #1e3 default
+qp_eta_min:      1e-3
+
+# EMA disabled (not part of the reported recipe)
+use_ema:       false
 
 # Misc
 compile: true
 grad_clip: 1.0
-log_name:       LDFA_72_imagenet100v2_lr5e4_jitters_qp_2_5e3_withoutx3_exp1
-log_dir:        LDFA_72_imagenet100v2/logs
+log_name:       LDFA_72_imagenet100_exp1

@@ -1,5 +1,4 @@
-# ViT-Base on full ImageNet-1K — BP (standard backprop)
-# Follows DeiT-Base training recipe
+# ViT-B/16 on full ImageNet-1K — LDFA, uniform rank 192 (all 12 blocks)
 
 dataset:    imagenet
 imagenet_dir: ~/data/imagenet
@@ -17,16 +16,19 @@ mlp_ratio:      4.0
 qkv_bias:       true
 drop_rate:      0.0
 attn_drop_rate: 0.0
-drop_path_rate: 0.1
+drop_path_rate: 0.0
 
 # Training
-batch_size:    1024
+batch_size:    512       # per-GPU batch; 2 GPUs × 512 = 1024 effective
 num_epochs:    300
 warmup_epochs: 5
 
-# Optimizer
-learning_rate: 1e-3     # DeiT: lr = base_lr * batch_size / 512 = 5e-4 * 128/512 * ... 
-                        # standard is 1e-3 at batch 1024; scale accordingly
+# Multi-GPU (2 × A100, DDP)
+gpu_ids: [0, 1]
+master_port: 12355
+
+# Optimizer (forward weights)
+learning_rate: 1e-3     # DeiT scaling: 5e-4 × 1024 / 512
 weight_decay:  0.05
 no_wd_bias_norm: true
 eta_min:       1e-5
@@ -37,22 +39,31 @@ cutmix_alpha:    1.0
 label_smoothing: 0.1
 # RandAugment and RandomErasing are in the dataloader (num_ops=2, mag=9, erasing_p=0.25)
 
-# LDFA
-# LDFA
+# LDFA feedback optimizer (Q, P): AdamW, same 5-epoch linear warmup + cosine schedule as the forward optimizer
 use_ldfa_linear: true
-ldfa_rank:       192
-qp_lr:           5e-3 # 5e3 default
+qp_lr:           1e-2
 qp_weight_decay: 0.05
-qp_eta_min:      1e-3 #1e3 default
+qp_eta_min:      1e-3
 
-# EMA (Exponential Moving Average of model weights)
-# Set use_ema: true to enable; has no effect on previous runs when false
-use_ema:       true
-ema_decay:     0.99996  # DeiT base decay; effective decay at bs=512 is ~0.99998 (= 1 - (1-0.99996)*(512/1024))
+# Per-block feedback rank (-1 = standard backprop)
+ldfa_layer_ranks:
+  0:  192
+  1:  192
+  2:  192
+  3:  192
+  4:  192
+  5:  192
+  6:  192
+  7:  192
+  8:  192
+  9:  192
+  10: 192
+  11: 192
+
+# EMA disabled (not part of the reported recipe)
+use_ema:       false
 
 # Misc
 compile: true
-num_workers: 8         # increase if GPU is starved (check with nvidia-smi; aim for >90% utilization)
-log_name:       LDFA_192_imagenet1k_EMA_qp_5e3_qpmin_1e3_exp1
-log_dir:        artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k/logs
-checkpoint_dir: artifacts/training_checkpoints/imagenet/vit_b_16/LDFA_128_imagenet1k
+num_workers: 16         # split evenly across the GPU processes
+log_name:       LDFA_192_imagenet1k_exp1

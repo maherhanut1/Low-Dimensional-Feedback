@@ -1,4 +1,4 @@
-# Follows DeiT-Base training recipe
+# ViT-B/16 on ImageNet-100 — BP (standard backprop)
 dataset: imagenet100
 data_dir: ~/data/imagenet
 class_list_file: ./data/imagenet100_classes.txt
@@ -16,16 +16,15 @@ mlp_ratio:      4.0
 qkv_bias:       true
 drop_rate:      0.0
 attn_drop_rate: 0.0
-drop_path_rate: 0.1
+drop_path_rate: 0.0
 
-# Training
+# Training (single A100)
 batch_size:    512
 num_epochs:    300
 warmup_epochs: 5
 
-# Optimizer
-learning_rate: 5e-4     # DeiT: lr = base_lr * batch_size / 512 = 5e-4 * 128/512 * ... 
-                        # standard is 1e-3 at batch 1024; scale accordingly
+# Optimizer (forward weights)
+learning_rate: 5e-4     # DeiT base lr at batch 512
 weight_decay:  0.05
 no_wd_bias_norm: true
 eta_min:       1e-5
@@ -39,13 +38,10 @@ label_smoothing: 0.1
 # LDFA
 use_ldfa_linear: false
 
-#EMA
-use_ema:       true
-ema_decay:     0.99998  # DeiT base decay; effective decay at bs=512 is ~0.99998 (= 1 - (1-0.99996)*(512/1024))
-
+# EMA disabled (not part of the reported recipe)
+use_ema:       false
 
 # Misc
 compile: true
 grad_clip: 1.0
-log_name:       BP_imagenet100v2_cjitter_lr_1e3_EMA_BS512_exp1
-log_dir:        BP_imagenet100v2_rep/logs
+log_name:       BP_imagenet100_exp1
