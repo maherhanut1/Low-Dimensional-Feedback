@@ -3,7 +3,7 @@ Combined script: aggregate training_summary_detailed.csv → benchmark FLOPs →
 
 Task groups and their corresponding training configs:
   BP           → configs/imagenet1k_configs/train_vit_imagenet1k_BP.yaml
-  LDFA-192     → configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_multirank_192.yaml
+  LDFA-192     → configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_192.yaml
   LDFA-MultiR  → configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_multirank.yaml
 
 Usage:
@@ -15,8 +15,6 @@ Usage:
 
 import os
 import sys
-import json
-import hashlib
 import argparse
 
 import numpy as np
@@ -64,7 +62,7 @@ TASK_MAP = [
         None),    # use_ldfa_linear=true + per-layer ranks from config
     ('LDFA_192_s_imagenet1k',
         'LDFA-192',
-        'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_multirank_192.yaml',
+        'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_192.yaml',
         None),    # use_ldfa_linear=true + all layers rank 192 from config
     ('BP_imagenet1k',
         'BP',
@@ -142,11 +140,6 @@ def build_model(bench_cfg, method_cfg, device, dtype):
 
 # ── FLOPs measurement ─────────────────────────────────────────────────────────
 
-# Bumped when the measurement changes so stale caches are not reused
-# ('fwd_once': forward no longer counted twice; untagged caches hold the old numbers)
-FLOPS_CACHE_TAG = 'fwd_once'
-
-
 def measure_flops(model, x, y, n_iters=3):
     """Return total (fwd + bwd) FLOPs for one batch."""
     # Forward
@@ -164,7 +157,7 @@ def measure_flops(model, x, y, n_iters=3):
     x_proxy = x.float().requires_grad_(True)
     bwd = 0.0
     for _ in range(n_iters):
-        # Forward runs outside the profiler so it is not counted a second time
+        # Graph is built outside the profiler, so only the backward pass is profiled
         out = model(x_proxy.to(x.dtype))
         loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
         with torch.profiler.profile(
@@ -180,28 +173,12 @@ def measure_flops(model, x, y, n_iters=3):
     return fwd + bwd  # total FLOPs per batch
 
 
-def get_flops_per_batch(label, method_cfg_path, bench_cfg, cache_dir, use_ldfa_override=None):
-    """Return GFLOPs/batch for a given method, using cache if available.
-    
+def get_flops_per_batch(label, method_cfg_path, bench_cfg, use_ldfa_override=None):
+    """Return fwd + bwd GFLOPs for one batch of the given method.
+
     method_cfg_path: training config that provides ldfa_layer_ranks / ldfa_rank
     use_ldfa_override: if not None, force use_ldfa_linear to this value (e.g. False for BP)
     """
-    with open(method_cfg_path, 'r') as f:
-        method_text = f.read()
-    override_str = str(use_ldfa_override)
-    cache_key = hashlib.md5(
-        (method_text + str(sorted(bench_cfg.items())) + override_str
-         + FLOPS_CACHE_TAG).encode()
-    ).hexdigest()[:12]
-    cache_file = os.path.join(cache_dir, f'flops_cache_{cache_key}.json')
-
-    if os.path.exists(cache_file):
-        with open(cache_file, 'r') as f:
-            data = json.load(f)
-        print(f"  [{label}] Loaded cached FLOPs: {data['flops_gflops']:.2f} GFLOPs/batch "
-              f"(from {os.path.basename(cache_file)})")
-        return data['flops_gflops']
-
     print(f"  [{label}] Benchmarking FLOPs...")
     with open(method_cfg_path, 'r') as f:
         method_cfg = yaml.safe_load(f)
@@ -224,9 +201,7 @@ def get_flops_per_batch(label, method_cfg_path, bench_cfg, cache_dir, use_ldfa_o
     del model
     torch.cuda.empty_cache()
 
-    with open(cache_file, 'w') as f:
-        json.dump({'flops_gflops': flops_gflops, 'method': label}, f, indent=2)
-    print(f"  [{label}] {flops_gflops:.2f} GFLOPs/batch → cached to {os.path.basename(cache_file)}")
+    print(f"  [{label}] {flops_gflops:.2f} GFLOPs/batch")
     return flops_gflops
 
 
@@ -376,7 +351,7 @@ def run(detailed_csv, bench_config_path, output_dir, acc_ylim=None, flops_ylim=N
     print("\n=== FLOPs benchmarking ===")
     for label, sdata in summary.items():
         flops_batch = get_flops_per_batch(
-            label, sdata['config_path'], bench_cfg, output_dir,
+            label, sdata['config_path'], bench_cfg,
             use_ldfa_override=sdata['use_ldfa_override']
         )
         flops_epoch = flops_batch * batch_scale * batches_per_epoch  # GFLOPs/epoch

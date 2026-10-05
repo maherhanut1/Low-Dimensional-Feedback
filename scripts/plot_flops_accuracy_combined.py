@@ -8,8 +8,6 @@ from timm.models.vision_transformer import VisionTransformer
 import sys
 import yaml
 import argparse
-import json
-import hashlib
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -32,11 +30,6 @@ def replace_linear(module, new_linear_cls, **kwargs):
             replace_linear(child, new_linear_cls, **kwargs)
 
 
-# Bumped when the measurement changes so stale caches are not reused
-# ('fwd_once': forward no longer counted twice; untagged caches hold the old numbers)
-FLOPS_CACHE_TAG = 'fwd_once'
-
-
 def measure_flops(model, x, y, n_iters=5):
     # Forward FLOPs
     with torch.no_grad():
@@ -51,7 +44,7 @@ def measure_flops(model, x, y, n_iters=5):
     x_fp32 = x.float().requires_grad_(True)  # bfloat16 doesn't support grad on input; use float32 proxy
     bwd_flops = 0.0
     for _ in range(n_iters):
-        # Forward runs outside the profiler so it is not counted a second time
+        # Graph is built outside the profiler, so only the backward pass is profiled
         out = model(x_fp32.to(x.dtype))
         loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
         with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
@@ -149,24 +142,10 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     # Extract ranks (excluding BP for now), convert to int
     ldfa_ranks = [int(r) for r in convergence_df['Rank'].values if r != 'BP' and str(r).isdigit()]
     
-    # Get FLOPs per epoch for each rank — use cache if available
+    # FLOPs per batch for BP and each rank
     print("\n=== Measuring FLOPs ===")
-    # Cache key: hash of config file contents + ranks list
-    with open(config_path, 'r') as f:
-        config_text = f.read()
-    cache_key = hashlib.md5((config_text + str(sorted(ldfa_ranks)) + FLOPS_CACHE_TAG).encode()).hexdigest()[:12]
-    cache_file = os.path.join(output_dir, f'flops_cache_{cache_key}.json')
+    flops_per_batch = get_flops_per_epoch(config_path, ldfa_ranks)
 
-    if os.path.exists(cache_file):
-        print(f"Loading cached FLOPs from {cache_file}")
-        with open(cache_file, 'r') as f:
-            flops_per_batch = {int(k) if k.isdigit() else k: v for k, v in json.load(f).items()}
-    else:
-        flops_per_batch = get_flops_per_epoch(config_path, ldfa_ranks)
-        with open(cache_file, 'w') as f:
-            json.dump(flops_per_batch, f, indent=2)
-        print(f"FLOPs cached to {cache_file}")
-    
     # Load config to get batches_per_epoch and actual training batch size
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
