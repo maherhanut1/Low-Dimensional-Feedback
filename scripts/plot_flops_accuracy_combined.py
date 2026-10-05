@@ -13,6 +13,8 @@ import argparse
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from plot_imagenet1k_flops_accuracy import measure_update_flops, REFACTORIZATIONS_PER_EPOCH
 
 
 def replace_linear(module, new_linear_cls, **kwargs):
@@ -58,12 +60,20 @@ def measure_flops(model, x, y, n_iters=5):
     return fwd_flops, bwd_flops
 
 
-def get_flops_per_epoch(config_path, ranks_list):
-    """Measure FLOPs for BP and each LDFA rank"""
+def get_flops_per_epoch(config_path, train_config_path, ranks_list):
+    """Measure FLOPs for BP and each LDFA rank.
+
+    Returns {rank or 'BP': (fwd + bwd GFLOPs of one benchmarking batch,
+                            GFLOPs of one optimizer step, GFLOPs of one Q,P refactorization)}.
+    The optimizer settings (weight decay, parameter groups) come from train_config_path.
+    """
     
     # Load config
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
+    with open(train_config_path, 'r') as f:
+        train_config = yaml.safe_load(f)
+    train_config.pop('ldfa_layer_ranks', None)
     
     batch_size = config.get('batch_size', 32)
     image_size = config.get('image_size', 224)
@@ -104,9 +114,10 @@ def get_flops_per_epoch(config_path, ranks_list):
     replace_linear(model_bp, BP_Linear)
     model_bp = model_bp.to(device=device, dtype=dtype)
     fwd_bp, bwd_bp = measure_flops(model_bp, x, y, n_iters=n_iters)
-    flops_dict['BP'] = (fwd_bp + bwd_bp) / 1e9  # Total FLOPs in GFLOPs
-    print(f"BP: {flops_dict['BP']:.2f} GFLOPs per batch")
     del model_bp
+    opt_step, refactor = measure_update_flops(config, dict(train_config, use_ldfa_linear=False), device)
+    flops_dict['BP'] = ((fwd_bp + bwd_bp) / 1e9, opt_step, refactor)
+    print(f"BP: {flops_dict['BP'][0]:.2f} GFLOPs per batch, optimizer step {opt_step:.3f} GFLOPs")
     
     # Measure LDFA for each rank
     for rank in ranks_list:
@@ -121,15 +132,18 @@ def get_flops_per_epoch(config_path, ranks_list):
         replace_linear(model_ldfa, LDFA_Linear, rank=rank)
         model_ldfa = model_ldfa.to(device=device, dtype=dtype)
         fwd_ldfa, bwd_ldfa = measure_flops(model_ldfa, x, y, n_iters=n_iters)
-        flops_dict[rank] = (fwd_ldfa + bwd_ldfa) / 1e9  # Total FLOPs in GFLOPs
-        print(f"LDFA rank {rank}: {flops_dict[rank]:.2f} GFLOPs per batch")
         del model_ldfa
+        opt_step, refactor = measure_update_flops(
+            config, dict(train_config, use_ldfa_linear=True, ldfa_rank=rank), device)
+        flops_dict[rank] = ((fwd_ldfa + bwd_ldfa) / 1e9, opt_step, refactor)
+        print(f"LDFA rank {rank}: {flops_dict[rank][0]:.2f} GFLOPs per batch, optimizer step {opt_step:.3f} GFLOPs, "
+              f"Q,P refactorization {refactor:.1f} GFLOPs")
     
     return flops_dict
 
 
-def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, output_dir='experiment_plots', suffix='top1',
-                                 flops_margin=2.5):
+def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, train_config_path,
+                                 output_dir='experiment_plots', suffix='top1', flops_margin=2.5):
     """
     Create combined plots showing FLOPs to convergence and accuracy
     Generates two versions: bars for FLOPs + line for accuracy, and vice versa
@@ -144,7 +158,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     
     # FLOPs per batch for BP and each rank
     print("\n=== Measuring FLOPs ===")
-    flops_per_batch = get_flops_per_epoch(config_path, ldfa_ranks)
+    flops_per_batch = get_flops_per_epoch(config_path, train_config_path, ldfa_ranks)
 
     # Load config to get batches_per_epoch and actual training batch size
     with open(config_path, 'r') as f:
@@ -157,8 +171,10 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
 
     # Calculate FLOPs per epoch for each configuration (scaled to actual training batch size)
     flops_per_epoch = {}
-    for rank, flops_batch in flops_per_batch.items():
-        flops_per_epoch[rank] = flops_batch * batch_scale * batches_per_epoch  # GFLOPs per epoch
+    for rank, (flops_batch, opt_step, refactor) in flops_per_batch.items():
+        flops_per_epoch[rank] = (flops_batch * batch_scale * batches_per_epoch    # forward + backward
+                                 + opt_step * batches_per_epoch                   # one optimizer step per batch
+                                 + refactor * REFACTORIZATIONS_PER_EPOCH)         # Q,P SVD refactorizations
         print(f"{rank}: {flops_per_epoch[rank]:.2f} GFLOPs per epoch ({batches_per_epoch} batches)")
     
     # Calculate total FLOPs to convergence
@@ -323,6 +339,9 @@ if __name__ == '__main__':
     parser.add_argument('--config', type=str,
                         default='configs/benchmarking_configs/vit_benchmarking_configs.yaml',
                         help='Path to benchmarking config YAML file')
+    parser.add_argument('--train_config', type=str,
+                        default='configs/cifar10_configs/train_vit_LDFA_config_32.yaml',
+                        help='Training config of the runs (optimizer settings for the update FLOPs)')
     parser.add_argument('--output_dir', type=str,
                         default='experiment_plots',
                         help='Directory to save output plots')
@@ -337,6 +356,7 @@ if __name__ == '__main__':
         args.convergence_csv,
         args.accuracy_csv,
         args.config,
+        args.train_config,
         args.output_dir,
         args.suffix,
         args.flops_margin,

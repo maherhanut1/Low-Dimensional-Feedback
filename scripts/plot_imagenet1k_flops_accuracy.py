@@ -1,6 +1,10 @@
 """
 Combined script: aggregate training_summary_detailed.csv → benchmark FLOPs → plot.
 
+FLOPs per epoch = forward + backward of every batch
+                + one optimizer step per batch (forward weights and, for LDFA, Q and P)
+                + the Q,P SVD refactorizations done during the epoch.
+
 Task groups and their corresponding training configs:
   BP           → configs/imagenet1k_configs/train_vit_imagenet1k_BP.yaml
   LDFA-192     → configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_192.yaml
@@ -26,12 +30,14 @@ import matplotlib as mpl
 import yaml
 import torch
 import torch.nn as nn
+from torch.utils._python_dispatch import TorchDispatchMode
 
 from timm.models.vision_transformer import VisionTransformer
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
+from vit_training.train_vit import get_param_groups
 
 # ── style ─────────────────────────────────────────────────────────────────────
 mpl.rcParams['font.family'] = 'serif'
@@ -173,8 +179,94 @@ def measure_flops(model, x, y, n_iters=3):
     return fwd + bwd  # total FLOPs per batch
 
 
+# ── optimizer step and Q,P refactorization FLOPs ──────────────────────────────
+
+# vit_training/train_vit.py re-initializes Q,P from an SVD of W every len(train_loader) // 2 steps
+REFACTORIZATIONS_PER_EPOCH = 2
+
+ELEMENTWISE_FLOPS = {'add': 1, 'sub': 1, 'mul': 1, 'div': 1, 'sqrt': 1, 'rsqrt': 1, 'reciprocal': 1,
+                     'neg': 1, 'pow': 1, 'exp': 1, 'log': 1, 'lerp': 3, 'addcmul': 3, 'addcdiv': 3}
+
+
+class OpFlopCounter(TorchDispatchMode):
+    """FLOPs of every op PyTorch executes inside the context.
+
+    Matrix multiplies are counted from their shapes (2·m·k·n), elementwise ops per element, and
+    QR / SVD, whose LAPACK internals are not visible op by op, with the Golub & Van Loan
+    operation counts for their shapes.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.flops = 0.0
+
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        kwargs = kwargs or {}
+        out = func(*args, **kwargs)
+        name = func._overloadpacket.__name__
+        foreach = name.startswith('_foreach_')
+        op = (name[len('_foreach_'):] if foreach else name).rstrip('_')
+        if op == 'mm':
+            (m, k), n = args[0].shape, args[1].shape[1]
+            self.flops += 2 * m * k * n
+        elif op == 'addmm':
+            (m, k), n = args[1].shape, args[2].shape[1]
+            self.flops += 2 * m * k * n + m * n
+        elif op == 'bmm':
+            b, m, k = args[0].shape
+            self.flops += 2 * b * m * k * args[1].shape[2]
+        elif op == 'linalg_qr':                      # reduced QR, including forming Q
+            m, n = sorted(args[0].shape[-2:], reverse=True)
+            self.flops += 4 * m * n * n - 4 * n ** 3 / 3
+        elif op == '_linalg_svd':                    # thin SVD with U and V (R-SVD)
+            m, n = sorted(args[0].shape[-2:], reverse=True)
+            self.flops += 6 * m * n * n + 20 * n ** 3
+        elif op in ELEMENTWISE_FLOPS:
+            per_element = ELEMENTWISE_FLOPS[op] + (op in ('add', 'sub') and kwargs.get('alpha', 1) != 1)
+            if foreach:
+                n_elements = sum(x.numel() for x in args[0])
+            else:
+                n_elements = (out if isinstance(out, torch.Tensor) else args[0]).numel()
+            self.flops += per_element * n_elements
+        return out
+
+
+def build_optimizers(model, method_cfg):
+    """The AdamW optimizers of vit_training/train_vit.py: forward weights, plus Q,P for LDFA."""
+    lr, wd = float(method_cfg['learning_rate']), float(method_cfg['weight_decay'])
+    named = [(n, p) for n, p in model.named_parameters() if not ('P' in n or 'Q' in n)]
+    qp = [p for n, p in model.named_parameters() if 'P' in n or 'Q' in n]
+    optimizers = [torch.optim.AdamW(get_param_groups(named, wd, method_cfg.get('no_wd_bias_norm', False)),
+                                    lr=lr, weight_decay=wd)]
+    if qp:
+        optimizers.append(torch.optim.AdamW(qp, lr=float(method_cfg['qp_lr']),
+                                            weight_decay=float(method_cfg['qp_weight_decay'])))
+    return optimizers
+
+
+def measure_update_flops(bench_cfg, method_cfg, device):
+    """Return (GFLOPs of one optimizer step of all optimizers, GFLOPs of one Q,P refactorization)."""
+    model = build_model(bench_cfg, method_cfg, device, torch.float32)   # parameters are fp32 in training
+    x = torch.randn(2, bench_cfg['in_chans'], bench_cfg['image_size'], bench_cfg['image_size'], device=device)
+    model(x).sum().backward()
+    optimizers = build_optimizers(model, method_cfg)
+    for opt in optimizers:
+        opt.step()                                   # first step creates the optimizer state
+    with OpFlopCounter() as step_counter:
+        for opt in optimizers:
+            opt.step()
+    with OpFlopCounter() as refactor_counter:        # = reinitialize_pq_layers in training
+        for module in model.modules():
+            if hasattr(module, 'init_svd_approx'):
+                module.init_svd_approx()
+    del model, optimizers
+    torch.cuda.empty_cache()
+    return step_counter.flops / 1e9, refactor_counter.flops / 1e9
+
+
 def get_flops_per_batch(label, method_cfg_path, bench_cfg, use_ldfa_override=None):
-    """Return fwd + bwd GFLOPs for one batch of the given method.
+    """Return (fwd + bwd GFLOPs of one benchmarking batch, GFLOPs of one optimizer step,
+    GFLOPs of one Q,P refactorization) for the given method.
 
     method_cfg_path: training config that provides ldfa_layer_ranks / ldfa_rank
     use_ldfa_override: if not None, force use_ldfa_linear to this value (e.g. False for BP)
@@ -200,9 +292,11 @@ def get_flops_per_batch(label, method_cfg_path, bench_cfg, use_ldfa_override=Non
     flops_gflops = total_flops / 1e9
     del model
     torch.cuda.empty_cache()
+    opt_step_gflops, refactor_gflops = measure_update_flops(bench_cfg, method_cfg, device)
 
-    print(f"  [{label}] {flops_gflops:.2f} GFLOPs/batch")
-    return flops_gflops
+    print(f"  [{label}] fwd+bwd {flops_gflops:.2f} GFLOPs/batch, optimizer step {opt_step_gflops:.3f} GFLOPs, "
+          f"Q,P refactorization {refactor_gflops:.1f} GFLOPs")
+    return flops_gflops, opt_step_gflops, refactor_gflops
 
 
 # ── figure ────────────────────────────────────────────────────────────────────
@@ -350,11 +444,13 @@ def run(detailed_csv, bench_config_path, output_dir, acc_ylim=None, flops_ylim=N
     # ── 3. Benchmark FLOPs ────────────────────────────────────────────────────
     print("\n=== FLOPs benchmarking ===")
     for label, sdata in summary.items():
-        flops_batch = get_flops_per_batch(
+        flops_batch, opt_step, refactor = get_flops_per_batch(
             label, sdata['config_path'], bench_cfg,
             use_ldfa_override=sdata['use_ldfa_override']
         )
-        flops_epoch = flops_batch * batch_scale * batches_per_epoch  # GFLOPs/epoch
+        flops_epoch = (flops_batch * batch_scale * batches_per_epoch    # forward + backward
+                       + opt_step * batches_per_epoch                   # one optimizer step per batch
+                       + refactor * REFACTORIZATIONS_PER_EPOCH)         # Q,P SVD refactorizations
         n = sdata['n']
         sdata['flops_epoch_gflops'] = flops_epoch
         sdata['total_pflops']     = (sdata['mean_steps'] * flops_epoch) / 1e6

@@ -25,14 +25,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import yaml
-import torch
-import torch.nn as nn
-from timm.models.vision_transformer import VisionTransformer
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
-from modules.opt_layers.BP_Linear import Linear as BP_Linear
-from plot_imagenet1k_flops_accuracy import plot_flops_accuracy_figure
+from plot_imagenet1k_flops_accuracy import (plot_flops_accuracy_figure, get_flops_per_batch,
+                                            REFACTORIZATIONS_PER_EPOCH)
 
 # ── style ─────────────────────────────────────────────────────────────────────
 mpl.rcParams['font.family'] = 'serif'
@@ -71,124 +67,6 @@ TASK_MAP = [
 ]
 
 PLOT_ORDER = ['BP', 'LDFA-MultiR', 'LDFA-MultiR-2', 'LDFA-192', 'LDFA-144', 'LDFA-128', 'LDFA-96']
-
-
-# ── model building (shared with plot_imagenet1k_flops_accuracy.py) ────────────
-
-def replace_linear(module, new_linear_cls, **kwargs):
-    for name, child in module.named_children():
-        if isinstance(child, nn.Linear):
-            curr_kwargs = dict(kwargs)
-            if 'rank' in curr_kwargs and 'qkv' in name:
-                curr_kwargs['rank'] = curr_kwargs['rank'] * 3
-            new_linear = new_linear_cls(
-                child.in_features, child.out_features,
-                **curr_kwargs, bias=(child.bias is not None))
-            setattr(module, name, new_linear)
-        else:
-            replace_linear(child, new_linear_cls, **kwargs)
-
-
-def replace_linear_by_layer(model, layer_rank_map, default_rank=-1):
-    for i, block in enumerate(model.blocks):
-        rank = layer_rank_map.get(i, default_rank)
-        if rank == -1:
-            replace_linear(block, BP_Linear)
-        else:
-            replace_linear(block, LDFA_Linear, rank=rank)
-
-
-def build_model(bench_cfg, method_cfg, device, dtype):
-    model = VisionTransformer(
-        img_size=bench_cfg['image_size'],
-        patch_size=bench_cfg['patch_size'],
-        in_chans=bench_cfg['in_chans'],
-        num_classes=bench_cfg['num_classes'],
-        embed_dim=bench_cfg['embed_dim'],
-        depth=bench_cfg['depth'],
-        num_heads=bench_cfg['num_heads'],
-        mlp_ratio=bench_cfg['mlp_ratio'],
-        qkv_bias=bench_cfg['qkv_bias'],
-        drop_rate=bench_cfg.get('drop_rate', 0.0),
-        attn_drop_rate=bench_cfg.get('attn_drop_rate', 0.0),
-        drop_path_rate=bench_cfg.get('drop_path_rate', 0.0),
-    )
-    use_ldfa = method_cfg.get('use_ldfa_linear', False)
-    if not use_ldfa:
-        replace_linear(model, BP_Linear)
-    else:
-        layer_ranks_raw = method_cfg.get('ldfa_layer_ranks', None)
-        if layer_ranks_raw is not None:
-            layer_ranks = {int(k): int(v) for k, v in layer_ranks_raw.items()}
-            replace_linear_by_layer(model, layer_ranks,
-                                    default_rank=int(method_cfg.get('ldfa_rank', -1)))
-        else:
-            rank = int(method_cfg.get('ldfa_rank', 128))
-            replace_linear(model, LDFA_Linear, rank=rank)
-    return model.to(device=device, dtype=dtype)
-
-
-# ── FLOPs measurement ─────────────────────────────────────────────────────────
-
-def measure_flops(model, x, y, n_iters=3):
-    with torch.no_grad():
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA],
-            with_flops=True) as prof:
-            for _ in range(n_iters):
-                _ = model(x)
-    fwd = sum(e.flops for e in prof.key_averages()
-              if hasattr(e, 'flops') and e.flops is not None) / n_iters
-
-    x_proxy = x.float().requires_grad_(True)
-    bwd = 0.0
-    for _ in range(n_iters):
-        # Graph is built outside the profiler, so only the backward pass is profiled
-        out = model(x_proxy.to(x.dtype))
-        loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA],
-            with_flops=True) as prof:
-            loss.backward()
-        model.zero_grad()
-        bwd += sum(e.flops for e in prof.key_averages()
-                   if hasattr(e, 'flops') and e.flops is not None)
-    bwd /= n_iters
-
-    return fwd + bwd
-
-
-def get_flops_per_batch(label, method_cfg_path, bench_cfg, use_ldfa_override=None):
-    """Return fwd + bwd GFLOPs for one batch of the given method.
-
-    method_cfg_path: training config that provides ldfa_layer_ranks / ldfa_rank
-    use_ldfa_override: if not None, force use_ldfa_linear to this value (e.g. False for BP)
-    """
-    print(f"  [{label}] Benchmarking FLOPs...")
-    with open(method_cfg_path, 'r') as f:
-        method_cfg = yaml.safe_load(f)
-    if use_ldfa_override is not None:
-        method_cfg['use_ldfa_linear'] = use_ldfa_override
-
-    device = bench_cfg['device']
-    dtype  = torch.bfloat16 if bench_cfg.get('dtype', 'bfloat16') == 'bfloat16' else torch.float32
-    bs     = bench_cfg['batch_size']
-    n_iters = bench_cfg.get('n_iters', 3)
-
-    model = build_model(bench_cfg, method_cfg, device, dtype)
-    x = torch.randn(bs, 3, bench_cfg['image_size'], bench_cfg['image_size'],
-                    device=device, dtype=dtype)
-    y = torch.randn(bs, bench_cfg['num_classes'], device=device, dtype=dtype)
-
-    total_flops = measure_flops(model, x, y, n_iters=n_iters)
-    flops_gflops = total_flops / 1e9
-    del model
-    torch.cuda.empty_cache()
-
-    print(f"  [{label}] {flops_gflops:.2f} GFLOPs/batch")
-    return flops_gflops
 
 
 # ── main pipeline ─────────────────────────────────────────────────────────────
@@ -284,11 +162,13 @@ def run(detailed_csv, bench_config_path, output_dir,
     # ── 5. Benchmark FLOPs ────────────────────────────────────────────────────
     print("\n=== FLOPs benchmarking ===")
     for label, sdata in summary.items():
-        flops_batch = get_flops_per_batch(
+        flops_batch, opt_step, refactor = get_flops_per_batch(
             label, sdata['config_path'], bench_cfg,
             use_ldfa_override=sdata['use_ldfa_override']
         )
-        flops_epoch_gflops = flops_batch * batch_scale * batches_per_epoch
+        flops_epoch_gflops = (flops_batch * batch_scale * batches_per_epoch    # forward + backward
+                              + opt_step * batches_per_epoch                   # one optimizer step per batch
+                              + refactor * REFACTORIZATIONS_PER_EPOCH)         # Q,P SVD refactorizations
         n = sdata['n_steps']
         sdata['flops_epoch_gflops'] = flops_epoch_gflops
         sdata['total_pflops']       = (sdata['mean_steps'] * flops_epoch_gflops) / 1e6
