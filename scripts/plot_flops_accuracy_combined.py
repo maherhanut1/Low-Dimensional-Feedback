@@ -32,6 +32,11 @@ def replace_linear(module, new_linear_cls, **kwargs):
             replace_linear(child, new_linear_cls, **kwargs)
 
 
+# Bumped when the measurement changes so stale caches are not reused
+# ('fwd_once': forward no longer counted twice; untagged caches hold the old numbers)
+FLOPS_CACHE_TAG = 'fwd_once'
+
+
 def measure_flops(model, x, y, n_iters=5):
     # Forward FLOPs
     with torch.no_grad():
@@ -44,15 +49,18 @@ def measure_flops(model, x, y, n_iters=5):
 
     # Backward FLOPs — recompute graph each iteration to avoid retain_graph memory accumulation
     x_fp32 = x.float().requires_grad_(True)  # bfloat16 doesn't support grad on input; use float32 proxy
-    with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
-                                            torch.profiler.ProfilerActivity.CUDA],
-                                with_flops=True) as prof:
-        for _ in range(n_iters):
-            out = model(x_fp32.to(x.dtype))
-            loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
+    bwd_flops = 0.0
+    for _ in range(n_iters):
+        # Forward runs outside the profiler so it is not counted a second time
+        out = model(x_fp32.to(x.dtype))
+        loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
+        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
+                                                torch.profiler.ProfilerActivity.CUDA],
+                                    with_flops=True) as prof:
             loss.backward()
-            model.zero_grad()
-    bwd_flops = sum([evt.flops for evt in prof.key_averages() if hasattr(evt, 'flops') and evt.flops is not None]) / n_iters
+        model.zero_grad()
+        bwd_flops += sum([evt.flops for evt in prof.key_averages() if hasattr(evt, 'flops') and evt.flops is not None])
+    bwd_flops /= n_iters
 
     return fwd_flops, bwd_flops
 
@@ -127,7 +135,8 @@ def get_flops_per_epoch(config_path, ranks_list):
     return flops_dict
 
 
-def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, output_dir='experiment_plots', suffix='top1'):
+def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, output_dir='experiment_plots', suffix='top1',
+                                 flops_margin=2.5):
     """
     Create combined plots showing FLOPs to convergence and accuracy
     Generates two versions: bars for FLOPs + line for accuracy, and vice versa
@@ -145,7 +154,7 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     # Cache key: hash of config file contents + ranks list
     with open(config_path, 'r') as f:
         config_text = f.read()
-    cache_key = hashlib.md5((config_text + str(sorted(ldfa_ranks))).encode()).hexdigest()[:12]
+    cache_key = hashlib.md5((config_text + str(sorted(ldfa_ranks)) + FLOPS_CACHE_TAG).encode()).hexdigest()[:12]
     cache_file = os.path.join(output_dir, f'flops_cache_{cache_key}.json')
 
     if os.path.exists(cache_file):
@@ -274,7 +283,6 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, out
     # Auto-compute axis limits from data
     acc_margin_bottom = 0.07
     acc_margin_top    = 0.01   # extra room for text annotations
-    flops_margin      = 2.5   # 10% padding each side
     acc_ylim = [
         min(acc_top1_values) - acc_margin_bottom,
         max(acc_top1_values) + acc_margin_top,
@@ -342,6 +350,8 @@ if __name__ == '__main__':
     parser.add_argument('--suffix', type=str,
                         default='top1',
                         help='Suffix for output filenames (e.g. 90pct_last or to_max)')
+    parser.add_argument('--flops_margin', type=float, default=2.5,
+                        help='FLOPs-axis padding as a multiple of the data span (smaller zooms in)')
     args = parser.parse_args()
 
     plot_flops_accuracy_combined(
@@ -350,4 +360,5 @@ if __name__ == '__main__':
         args.config,
         args.output_dir,
         args.suffix,
+        args.flops_margin,
     )

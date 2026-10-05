@@ -23,6 +23,7 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
 
     Two-pass approach:
       Pass 1 – load every experiment's accuracy curve and compute per-exp metrics.
+               Accuracy is the raw (non-EMA) model's test accuracy: 'eval/metric_accuracy'.
       After pass 1 – compute BP threshold = mean(max_acc) across BP experiments.
       Pass 2 – for each experiment find the first epoch where acc >= BP threshold
                and store it as Step_to_Match_BP.
@@ -85,6 +86,13 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                         step_90pct_last = s
                         break
 
+                # First epoch to reach 90 % of peak (max) accuracy
+                step_90pct_max = None
+                for s, v in zip(acc_steps, acc_values):
+                    if v >= 0.9 * max_acc:
+                        step_90pct_max = s
+                        break
+
                 # Wall-clock time of last logged event
                 ea = EventAccumulator(str(exp_folder) + '/logs')
                 ea.Reload()
@@ -109,6 +117,7 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
                         'Last_Epoch_Time':       last_time,
                         'Step_to_Max':           step_to_max if step_to_max is not None else 'N/A',
                         'Step_90pct_Last':       step_90pct_last if step_90pct_last is not None else 'N/A',
+                        'Step_90pct_Max':        step_90pct_max if step_90pct_max is not None else 'N/A',
                     },
                     'acc_steps':  acc_steps,
                     'acc_values': acc_values,
@@ -162,7 +171,7 @@ def extract_training_summary_to_csv(experiments, output_csv='training_summary.cs
             'Max_Val_Acc_Top2', 'Max_Val_Acc_Top2_Step',
             'Last_Epoch_Acc_Top1', 'Last_Epoch_Acc_Top2',
             'Last_Epoch_Step', 'Last_Epoch_Time',
-            'Step_to_Max', 'Step_90pct_Last',
+            'Step_to_Max', 'Step_90pct_Last', 'Step_90pct_Max',
             'BP_Threshold', 'Step_to_Match_BP',
         ]
         with open(output_csv, 'w', newline='') as csvfile:
@@ -209,8 +218,10 @@ def parse_experiment_folders(base_dir, ignore_patterns=None):
 
     experiments = defaultdict(list)
     
-    # Support both _exp_N and _expN naming conventions
-    pattern = re.compile(r'^(.+?)_exp_?(\d+)$')
+    # Support both _exp_N and _expN naming conventions, with an optional
+    # suffix after the experiment number (e.g. ..._exp1_noqpwd). The suffix
+    # is appended to the task name so variants stay distinct.
+    pattern = re.compile(r'^(.+?)_exp_?(\d+)(_.*)?$')
     
     for folder in base_path.iterdir():
         if folder.is_dir():
@@ -221,7 +232,7 @@ def parse_experiment_folders(base_dir, ignore_patterns=None):
 
             match = pattern.match(folder.name)
             if match:
-                task_name = match.group(1)
+                task_name = match.group(1) + (match.group(3) or '')
                 exp_number = int(match.group(2))
                 experiments[task_name].append((exp_number, folder))
             else:

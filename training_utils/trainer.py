@@ -3,6 +3,7 @@ import copy
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import torch
+import torch.distributed as dist
 from torch.amp import autocast
 from typing import List, Callable, Tuple, Optional
 
@@ -136,7 +137,8 @@ class Trainer:
 		torch.save(checkpoint, path)
 
 	def log_tensorboard(self, iteration):
-		# All ranks run eval (needed for DDP sync), only rank 0 writes to TensorBoard
+		# All ranks run eval on their shard of each loader and all-reduce the results;
+		# only rank 0 writes to TensorBoard
 
 		# Log learning rate
 		if self.rank == 0 and self.optimizers:
@@ -190,9 +192,11 @@ class Trainer:
 				all_outputs.append(outputs.detach().cpu())
 				all_targets.append(targets.detach().cpu())
 		# Concatenate all outputs and targets
+		total_samples = 0
 		if all_outputs and all_targets:
 			all_outputs = torch.cat(all_outputs, dim=0)
 			all_targets = torch.cat(all_targets, dim=0)
+			total_samples = all_targets.size(0)
 		# Compute metrics using accumulated outputs and targets
 		for metric_fn in self.metrics:
 			try:
@@ -200,6 +204,19 @@ class Trainer:
 			except TypeError:
 				value, name = metric_fn(loader, eval_model)
 			metrics_results[name] = value
+		# DDP: each rank evaluated its own shard of the loader; combine into global
+		# values. Metrics are per-sample averages, so a sample-weighted mean of the
+		# per-rank values is exact. Loss is averaged per batch.
+		if dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1:
+			names = list(metrics_results.keys())
+			packed = [total_loss, float(total_batches), float(total_samples)]
+			packed += [float(metrics_results[n]) * total_samples for n in names]
+			t = torch.tensor(packed, dtype=torch.float64, device=self.device)
+			dist.all_reduce(t, op=dist.ReduceOp.SUM)
+			t = t.tolist()
+			total_loss, total_batches, total_samples = t[0], t[1], t[2]
+			for i, n in enumerate(names):
+				metrics_results[n] = t[3 + i] / max(total_samples, 1)
 		avg_loss = total_loss / max(total_batches, 1)
 		return {'total_loss': avg_loss, 'metrics': metrics_results}
 

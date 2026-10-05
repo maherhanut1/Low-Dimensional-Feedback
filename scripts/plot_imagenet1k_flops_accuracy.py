@@ -42,6 +42,22 @@ mpl.rcParams['font.family'] = 'serif'
 # use_ldfa_override=False  → BP_Linear regardless of what the config says
 # use_ldfa_override=None   → respect use_ldfa_linear from the config
 TASK_MAP = [
+    ('LDFA_96_imagenet1k',
+     'LDFA-96',
+     'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_96.yaml',
+     None),    # all layers rank 96
+    ('LDFA_128_imagenet1k',
+     'LDFA-128',
+     'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_128.yaml',
+     None),    # all layers rank 128
+    ('LDFA_144_imagenet1k',
+     'LDFA-144',
+     'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_144.yaml',
+     None),    # all layers rank 144
+    ('LDFA_multiR_setting2_imagenet1k',
+        'LDFA-MultiR-2',
+        'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_multirank_setting2_light.yaml',
+        None),    # MultiR Set 2 (lighter): per-layer ranks from config
     ('LDFA_multiR_setting1_imagenet1k',
         'LDFA-MultiR',
         'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_multirank.yaml',
@@ -56,7 +72,7 @@ TASK_MAP = [
         False),   # override: force use_ldfa_linear=False → pure BP_Linear
 ]
 
-PLOT_ORDER = ['BP', 'LDFA-192', 'LDFA-MultiR']
+PLOT_ORDER = ['BP', 'LDFA-MultiR', 'LDFA-MultiR-2', 'LDFA-192', 'LDFA-144', 'LDFA-128', 'LDFA-96']
 
 
 # ── model building ────────────────────────────────────────────────────────────
@@ -126,6 +142,11 @@ def build_model(bench_cfg, method_cfg, device, dtype):
 
 # ── FLOPs measurement ─────────────────────────────────────────────────────────
 
+# Bumped when the measurement changes so stale caches are not reused
+# ('fwd_once': forward no longer counted twice; untagged caches hold the old numbers)
+FLOPS_CACHE_TAG = 'fwd_once'
+
+
 def measure_flops(model, x, y, n_iters=3):
     """Return total (fwd + bwd) FLOPs for one batch."""
     # Forward
@@ -141,17 +162,20 @@ def measure_flops(model, x, y, n_iters=3):
 
     # Backward (recompute graph each iter to avoid memory accumulation)
     x_proxy = x.float().requires_grad_(True)
-    with torch.profiler.profile(
-        activities=[torch.profiler.ProfilerActivity.CPU,
-                    torch.profiler.ProfilerActivity.CUDA],
-        with_flops=True) as prof:
-        for _ in range(n_iters):
-            out = model(x_proxy.to(x.dtype))
-            loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
+    bwd = 0.0
+    for _ in range(n_iters):
+        # Forward runs outside the profiler so it is not counted a second time
+        out = model(x_proxy.to(x.dtype))
+        loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU,
+                        torch.profiler.ProfilerActivity.CUDA],
+            with_flops=True) as prof:
             loss.backward()
-            model.zero_grad()
-    bwd = sum(e.flops for e in prof.key_averages()
-              if hasattr(e, 'flops') and e.flops is not None) / n_iters
+        model.zero_grad()
+        bwd += sum(e.flops for e in prof.key_averages()
+                   if hasattr(e, 'flops') and e.flops is not None)
+    bwd /= n_iters
 
     return fwd + bwd  # total FLOPs per batch
 
@@ -166,7 +190,8 @@ def get_flops_per_batch(label, method_cfg_path, bench_cfg, cache_dir, use_ldfa_o
         method_text = f.read()
     override_str = str(use_ldfa_override)
     cache_key = hashlib.md5(
-        (method_text + str(sorted(bench_cfg.items())) + override_str).encode()
+        (method_text + str(sorted(bench_cfg.items())) + override_str
+         + FLOPS_CACHE_TAG).encode()
     ).hexdigest()[:12]
     cache_file = os.path.join(cache_dir, f'flops_cache_{cache_key}.json')
 
@@ -203,6 +228,89 @@ def get_flops_per_batch(label, method_cfg_path, bench_cfg, cache_dir, use_ldfa_o
         json.dump({'flops_gflops': flops_gflops, 'method': label}, f, indent=2)
     print(f"  [{label}] {flops_gflops:.2f} GFLOPs/batch → cached to {os.path.basename(cache_file)}")
     return flops_gflops
+
+
+# ── figure ────────────────────────────────────────────────────────────────────
+
+COLOR_MAP = {'BP': '#000000',
+             'LDFA-96': '#08306B', 'LDFA-128': '#08519C', 'LDFA-144': '#2171B5',
+             'LDFA-192': '#4292C6', 'LDFA-MultiR': '#6BAED6',
+             'LDFA-MultiR-2': '#9ECAE1'}
+COLOR_LINE = '#B34700'
+
+# Vertical layout as fractions of the axes height: the accuracy error bars of all
+# methods fall inside BAR_TOP_BAND, the FLOPs line (± s.e.m.) inside FLOPS_BAND,
+# so the line stays inside the bars and clear of the accuracy error bars.
+BAR_TOP_BAND = (0.72, 0.86)
+FLOPS_BAND   = (0.12, 0.58)
+
+
+def _band_limits(lo_val, hi_val, band):
+    """Axis limits that place [lo_val, hi_val] at the given axes-fraction band."""
+    span = max(hi_val - lo_val, 1e-12) / (band[1] - band[0])
+    lo = lo_val - band[0] * span
+    return [lo, lo + span]
+
+
+def plot_flops_accuracy_figure(labels, acc_vals, acc_stds, flops_vals, flops_sems,
+                               out_base, acc_ylim=None, flops_ylim=None,
+                               missing_text='never\nreached BP'):
+    """Bars: top-1 accuracy (± s.d.); line: total PFLOPs (± s.e.m.).
+
+    Methods with NaN FLOPs (never reached the threshold) get no line point and
+    a note inside their bar. Saves out_base.{png,svg,pdf}.
+    """
+    x = np.arange(len(labels))
+    acc_vals, acc_stds = np.asarray(acc_vals, float), np.nan_to_num(np.asarray(acc_stds, float))
+    flops_vals = np.asarray(flops_vals, float)
+    flops_sems = np.nan_to_num(np.asarray(flops_sems, float))
+    finite = np.isfinite(flops_vals)
+
+    # Fixed size (same as the original 6-method figures) so panels match in the paper
+    fig, ax1 = plt.subplots(figsize=(9.6, 6))
+
+    ax1.bar(labels, acc_vals, yerr=acc_stds,
+            color=[COLOR_MAP.get(l, '#4292C6') for l in labels], alpha=0.75, capsize=5,
+            error_kw={'elinewidth': 2, 'capthick': 2})
+    if len(labels) > 6 or max(len(l) for l in labels) > 11:
+        # Too many methods for one-line names at the fixed figure width
+        ax1.set_xticks(x)
+        ax1.set_xticklabels([l.replace('LDFA-', 'LDFA-\n') for l in labels])
+    ax1.set_ylabel('Top-1 Accuracy', fontsize=16, fontweight='bold')
+    ax1.set_xlabel('Method', fontsize=16, fontweight='bold')
+    ax1.tick_params(axis='both', labelsize=14)
+    ax1.set_ylim(acc_ylim if acc_ylim is not None else
+                 _band_limits((acc_vals - acc_stds).min(), (acc_vals + acc_stds).max(),
+                              BAR_TOP_BAND))
+
+    ax2 = ax1.twinx()
+    ax2.errorbar(x[finite], flops_vals[finite], yerr=flops_sems[finite],
+                 color=COLOR_LINE, marker='s', linewidth=2, markersize=8,
+                 capsize=4, capthick=1.5, elinewidth=1.5)
+    ax2.set_ylabel('Computational Cost (PFLOPs)', fontsize=16, fontweight='bold',
+                   color=COLOR_LINE)
+    ax2.tick_params(axis='y', labelsize=14)
+    if flops_ylim is not None:
+        ax2.set_ylim(flops_ylim)
+    elif finite.any():
+        ax2.set_ylim(_band_limits((flops_vals - flops_sems)[finite].min(),
+                                  (flops_vals + flops_sems)[finite].max(), FLOPS_BAND))
+    for i in np.where(~finite)[0]:
+        lo, hi = ax2.get_ylim()
+        ax2.text(i, lo + (hi - lo) * 0.03, missing_text, ha='center', va='bottom',
+                 fontsize=9, color=COLOR_LINE, fontstyle='italic')
+
+    # Accuracy value above each error bar
+    acc_lim = ax1.get_ylim()
+    for i, (v, s) in enumerate(zip(acc_vals, acc_stds)):
+        ax1.text(i, v + s + (acc_lim[1] - acc_lim[0]) * 0.01, f'{v:.2%}',
+                 ha='center', va='bottom', fontsize=11, fontweight='bold')
+
+    fig.tight_layout()
+    for ext in ['png', 'svg', 'pdf']:
+        fig.savefig(f'{out_base}.{ext}', dpi=300 if ext == 'png' else None, bbox_inches='tight')
+    plt.close(fig)
+    print(f"Saved: {out_base}.{{png,svg,pdf}}")
 
 
 # ── main pipeline ─────────────────────────────────────────────────────────────
@@ -262,7 +370,7 @@ def run(detailed_csv, bench_config_path, output_dir, acc_ylim=None, flops_ylim=N
             'use_ldfa_override': gdata['use_ldfa_override'],
         }
         print(f"  {label}: acc={np.mean(accs):.4f}±{np.std(accs, ddof=1) if n>1 else 0:.4f}  "
-              f"steps_90pct={np.mean(steps):.1f}±{np.std(steps, ddof=1) if n>1 else 0:.1f}")
+              f"steps_to_max={np.mean(steps):.1f}±{np.std(steps, ddof=1) if n>1 else 0:.1f}")
 
     # ── 3. Benchmark FLOPs ────────────────────────────────────────────────────
     print("\n=== FLOPs benchmarking ===")
@@ -328,53 +436,9 @@ def run(detailed_csv, bench_config_path, output_dir, acc_ylim=None, flops_ylim=N
     flops_vals = [summary[l]['total_pflops']   for l in labels]
     flops_sems = [summary[l]['total_pflops_sem'] for l in labels]
 
-    # Colors: black for BP, dark-blue for LDFA-192, lighter-blue for LDFA-MultiR
-    color_map  = {'BP': '#000000', 'LDFA-192': '#2171B5', 'LDFA-MultiR': '#6BAED6'}
-    bar_colors = [color_map.get(l, '#4292C6') for l in labels]
-
-    fig, ax1 = plt.subplots(figsize=(8, 6))
-
-    ax1.bar(labels, acc_vals, yerr=acc_stds,
-            color=bar_colors, alpha=0.75, capsize=5,
-            error_kw={'elinewidth': 2, 'capthick': 2})
-    ax1.set_ylabel('Top-1 Accuracy', fontsize=16, fontweight='bold')
-    ax1.set_xlabel('Method', fontsize=16, fontweight='bold')
-    ax1.tick_params(axis='both', labelsize=14)
-
-    acc_span = max(acc_vals) - min(acc_vals)
-    acc_pad  = max(acc_span * 0.5, 0.01)
-    if acc_ylim is not None:
-        ax1.set_ylim([acc_ylim[0], acc_ylim[1]])
-    else:
-        ax1.set_ylim([min(acc_vals) - acc_pad, max(acc_vals) + acc_pad * 0.1])
-
-    ax2 = ax1.twinx()
-    color_line = '#B34700'
-    ax2.errorbar(labels, flops_vals, yerr=flops_sems,
-                 color=color_line, marker='s', linewidth=2, markersize=8,
-                 capsize=4, capthick=1.5, elinewidth=1.5)
-    ax2.set_ylabel('Computational Cost (PFLOPs)', fontsize=16, fontweight='bold', color=color_line)
-    ax2.tick_params(axis='y', labelsize=14)
-
-    flops_span = max(flops_vals) - min(flops_vals)
-    flops_pad  = max(flops_span * 0.5, max(flops_vals) * 0.05)
-    if flops_ylim is not None:
-        ax2.set_ylim([flops_ylim[0], flops_ylim[1]])
-    else:
-        ax2.set_ylim([min(flops_vals) - flops_pad, max(flops_vals) + flops_pad])
-
-    # Annotate accuracy percentage above each bar
-    ylim = ax1.get_ylim()
-    for i, (v, s) in enumerate(zip(acc_vals, acc_stds)):
-        ax1.text(i, v + s + (ylim[1] - ylim[0]) * 0.01, f'{v:.2%}',
-                 ha='center', va='bottom', fontsize=11, fontweight='bold')
-
-    plt.tight_layout()
-    for ext in ['png', 'svg', 'pdf']:
-        out_path = os.path.join(output_dir, f'imagenet1k_flops_accuracy.{ext}')
-        plt.savefig(out_path, dpi=300 if ext == 'png' else None, bbox_inches='tight')
-    print(f"Saved: {output_dir}/imagenet1k_flops_accuracy.{{png,svg,pdf}}")
-    plt.close()
+    plot_flops_accuracy_figure(labels, acc_vals, acc_stds, flops_vals, flops_sems,
+                               os.path.join(output_dir, 'imagenet1k_flops_accuracy'),
+                               acc_ylim=acc_ylim, flops_ylim=flops_ylim)
 
 
 if __name__ == '__main__':

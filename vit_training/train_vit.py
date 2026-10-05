@@ -259,7 +259,7 @@ def train_worker(rank, world_size, gpu_ids, config):
     # Each GPU sees batch_size samples per step → effective batch = world_size * batch_size
     # (equivalent to single-GPU training with world_size * batch_size)
     train_sampler = None
-    eval_train_loader = train_loader  # full train set for logging (rank 0 only)
+    eval_train_loader = train_loader  # full train set for logging (sharded across ranks in DDP)
     if is_ddp:
         # Divide workers evenly across processes to keep total CPU/IO load the same as single-GPU
         workers_per_proc = max(1, train_loader.num_workers // world_size)
@@ -274,17 +274,28 @@ def train_worker(rank, world_size, gpu_ids, config):
             prefetch_factor=4,        # prefetch more to keep GPU fed despite fewer workers
             persistent_workers=True,
         )
-        # Rank 0 uses a separate full (non-distributed) loader for train metric logging
-        if rank == 0:
-            eval_train_loader = DataLoader(
-                train_loader.dataset,
-                batch_size=batch_size,
-                shuffle=False,
-                num_workers=workers_per_proc,
-                pin_memory=True,
-            )
-        else:
-            eval_train_loader = None  # non-rank-0 processes don't log
+        # Evaluation loaders are sharded across ALL ranks (each rank evaluates 1/world_size
+        # of the set) and the Trainer all-reduces loss/metrics. This keeps every rank's
+        # per-epoch eval workload identical, so no rank stalls the DDP gradient all-reduce
+        # long enough to trip the NCCL watchdog timeout.
+        eval_train_sampler = DistributedSampler(
+            train_loader.dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
+        eval_train_loader = DataLoader(
+            train_loader.dataset,
+            batch_size=batch_size,
+            sampler=eval_train_sampler,
+            num_workers=workers_per_proc,
+            pin_memory=True,
+        )
+        test_sampler = DistributedSampler(
+            test_loader.dataset, num_replicas=world_size, rank=rank, shuffle=False, drop_last=False)
+        test_loader = DataLoader(
+            test_loader.dataset,
+            batch_size=batch_size,
+            sampler=test_sampler,
+            num_workers=workers_per_proc,
+            pin_memory=True,
+        )
 
     # --- Mixup / CutMix (applied as a batch-level transform on GPU) ---
     mixup_cutmix_transforms = []

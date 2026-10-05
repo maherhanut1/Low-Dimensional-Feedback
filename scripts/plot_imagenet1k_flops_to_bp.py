@@ -34,6 +34,7 @@ from timm.models.vision_transformer import VisionTransformer
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
+from plot_imagenet1k_flops_accuracy import plot_flops_accuracy_figure
 
 # ── style ─────────────────────────────────────────────────────────────────────
 mpl.rcParams['font.family'] = 'serif'
@@ -41,6 +42,22 @@ mpl.rcParams['font.family'] = 'serif'
 # ── task map ──────────────────────────────────────────────────────────────────
 # (csv_key_substring, display_label, training_config_path, use_ldfa_override)
 TASK_MAP = [
+    ('LDFA_96_imagenet1k',
+     'LDFA-96',
+     'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_96.yaml',
+     None),    # all layers rank 96
+    ('LDFA_128_imagenet1k',
+     'LDFA-128',
+     'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_128.yaml',
+     None),    # all layers rank 128
+    ('LDFA_144_imagenet1k',
+     'LDFA-144',
+     'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_144.yaml',
+     None),    # all layers rank 144
+    ('LDFA_multiR_setting2_imagenet1k',
+        'LDFA-MultiR-2',
+        'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_multirank_setting2_light.yaml',
+        None),    # MultiR Set 2 (lighter): per-layer ranks from config
     ('LDFA_multiR_setting1_imagenet1k',
      'LDFA-MultiR',
      'configs/imagenet1k_configs/train_vit_imagenet1k_LDFA_multirank.yaml',
@@ -55,7 +72,7 @@ TASK_MAP = [
      False),
 ]
 
-PLOT_ORDER = ['BP', 'LDFA-192', 'LDFA-MultiR']
+PLOT_ORDER = ['BP', 'LDFA-MultiR', 'LDFA-MultiR-2', 'LDFA-192', 'LDFA-144', 'LDFA-128', 'LDFA-96']
 
 
 # ── model building (shared with plot_imagenet1k_flops_accuracy.py) ────────────
@@ -115,6 +132,11 @@ def build_model(bench_cfg, method_cfg, device, dtype):
 
 # ── FLOPs measurement ─────────────────────────────────────────────────────────
 
+# Bumped when the measurement changes so stale caches are not reused
+# ('fwd_once': forward no longer counted twice; untagged caches hold the old numbers)
+FLOPS_CACHE_TAG = 'fwd_once'
+
+
 def measure_flops(model, x, y, n_iters=3):
     with torch.no_grad():
         with torch.profiler.profile(
@@ -127,17 +149,20 @@ def measure_flops(model, x, y, n_iters=3):
               if hasattr(e, 'flops') and e.flops is not None) / n_iters
 
     x_proxy = x.float().requires_grad_(True)
-    with torch.profiler.profile(
-        activities=[torch.profiler.ProfilerActivity.CPU,
-                    torch.profiler.ProfilerActivity.CUDA],
-        with_flops=True) as prof:
-        for _ in range(n_iters):
-            out = model(x_proxy.to(x.dtype))
-            loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
+    bwd = 0.0
+    for _ in range(n_iters):
+        # Forward runs outside the profiler so it is not counted a second time
+        out = model(x_proxy.to(x.dtype))
+        loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
+        with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU,
+                        torch.profiler.ProfilerActivity.CUDA],
+            with_flops=True) as prof:
             loss.backward()
-            model.zero_grad()
-    bwd = sum(e.flops for e in prof.key_averages()
-              if hasattr(e, 'flops') and e.flops is not None) / n_iters
+        model.zero_grad()
+        bwd += sum(e.flops for e in prof.key_averages()
+                   if hasattr(e, 'flops') and e.flops is not None)
+    bwd /= n_iters
 
     return fwd + bwd
 
@@ -148,7 +173,8 @@ def get_flops_per_batch(label, method_cfg_path, bench_cfg, cache_dir, use_ldfa_o
         method_text = f.read()
     override_str = str(use_ldfa_override)
     cache_key = hashlib.md5(
-        (method_text + str(sorted(bench_cfg.items())) + override_str).encode()
+        (method_text + str(sorted(bench_cfg.items())) + override_str
+         + FLOPS_CACHE_TAG).encode()
     ).hexdigest()[:12]
     cache_file = os.path.join(cache_dir, f'flops_cache_{cache_key}.json')
 
@@ -240,7 +266,8 @@ def run(detailed_csv, bench_config_path, output_dir,
                 s = row['Step_to_Match_BP']
 
             if pd.isna(s):
-                print(f"  [{label}] exp{exp_num}: Step_to_Match_BP is N/A, skipping")
+                print(f"  [{label}] exp{exp_num}: Step_to_Match_BP is N/A "
+                      f"(never reached BP threshold), skipping")
                 continue
             s = int(s)
             steps_list.append(s)
@@ -334,60 +361,16 @@ def run(detailed_csv, bench_config_path, output_dir,
 
     # ── 7. Plot ───────────────────────────────────────────────────────────────
     print("\n=== Creating plot ===")
-    labels     = order
+    # Methods that never reach the BP threshold have no cost; leave them out of the plot
+    labels     = [l for l in order if np.isfinite(summary[l]['total_pflops'])]
     acc_vals   = [summary[l]['mean_acc']        for l in labels]
     acc_stds   = [summary[l]['std_acc']         for l in labels]
     flops_vals = [summary[l]['total_pflops']    for l in labels]
     flops_sems = [summary[l]['total_pflops_sem'] for l in labels]
 
-    color_map  = {'BP': '#000000', 'LDFA-192': '#2171B5', 'LDFA-MultiR': '#6BAED6'}
-    bar_colors = [color_map.get(l, '#4292C6') for l in labels]
-
-    fig, ax1 = plt.subplots(figsize=(8, 6))
-
-    ax1.bar(labels, acc_vals, yerr=acc_stds,
-            color=bar_colors, alpha=0.75, capsize=5,
-            error_kw={'elinewidth': 2, 'capthick': 2})
-
-    ax1.set_ylabel('Top-1 Accuracy', fontsize=16, fontweight='bold')
-    ax1.set_xlabel('Method', fontsize=16, fontweight='bold')
-    ax1.tick_params(axis='both', labelsize=14)
-
-    if acc_ylim is not None:
-        ax1.set_ylim([acc_ylim[0], acc_ylim[1]])
-    else:
-        acc_span = max(acc_vals) - min(acc_vals)
-        acc_pad  = max(acc_span * 0.5, 0.01)
-        ax1.set_ylim([min(acc_vals) - acc_pad, max(acc_vals) + acc_pad * 0.1])
-
-    ax2 = ax1.twinx()
-    color_line = '#B34700'
-    ax2.errorbar(labels, flops_vals, yerr=flops_sems,
-                 color=color_line, marker='s', linewidth=2, markersize=8,
-                 capsize=4, capthick=1.5, elinewidth=1.5)
-    ax2.set_ylabel('Computational Cost (PFLOPs)', fontsize=16, fontweight='bold',
-                   color=color_line)
-    ax2.tick_params(axis='y', labelsize=14)
-
-    if flops_ylim is not None:
-        ax2.set_ylim([flops_ylim[0], flops_ylim[1]])
-    else:
-        flops_span = max(flops_vals) - min(flops_vals)
-        flops_pad  = max(flops_span * 0.5, max(flops_vals) * 0.05)
-        ax2.set_ylim([min(flops_vals) - flops_pad, max(flops_vals) + flops_pad])
-
-    # Annotate accuracy above each bar
-    ylim = ax1.get_ylim()
-    for i, (v, s) in enumerate(zip(acc_vals, acc_stds)):
-        ax1.text(i, v + s + (ylim[1] - ylim[0]) * 0.01, f'{v:.2%}',
-                 ha='center', va='bottom', fontsize=11, fontweight='bold')
-
-    plt.tight_layout()
-    for ext in ['png', 'svg', 'pdf']:
-        out_path = os.path.join(output_dir, f'imagenet1k_flops_to_bp.{ext}')
-        plt.savefig(out_path, dpi=300 if ext == 'png' else None, bbox_inches='tight')
-    print(f"Saved: {output_dir}/imagenet1k_flops_to_bp.{{png,svg,pdf}}")
-    plt.close()
+    plot_flops_accuracy_figure(labels, acc_vals, acc_stds, flops_vals, flops_sems,
+                               os.path.join(output_dir, 'imagenet1k_flops_to_bp'),
+                               acc_ylim=acc_ylim, flops_ylim=flops_ylim)
 
 
 if __name__ == '__main__':
