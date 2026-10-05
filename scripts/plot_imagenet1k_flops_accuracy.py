@@ -31,6 +31,7 @@ import yaml
 import torch
 import torch.nn as nn
 from torch.utils._python_dispatch import TorchDispatchMode
+from torch.utils.flop_counter import flop_registry, sdpa_flop_count, sdpa_backward_flop_count
 
 from timm.models.vision_transformer import VisionTransformer
 
@@ -121,9 +122,9 @@ def build_model(bench_cfg, method_cfg, device, dtype):
         num_heads=bench_cfg['num_heads'],
         mlp_ratio=bench_cfg['mlp_ratio'],
         qkv_bias=bench_cfg['qkv_bias'],
-        drop_rate=bench_cfg.get('drop_rate', 0.0),
-        attn_drop_rate=bench_cfg.get('attn_drop_rate', 0.0),
-        drop_path_rate=bench_cfg.get('drop_path_rate', 0.0),
+        drop_rate=method_cfg.get('drop_rate', bench_cfg.get('drop_rate', 0.0)),
+        attn_drop_rate=method_cfg.get('attn_drop_rate', bench_cfg.get('attn_drop_rate', 0.0)),
+        drop_path_rate=method_cfg.get('drop_path_rate', bench_cfg.get('drop_path_rate', 0.0)),
     )
 
     use_ldfa = method_cfg.get('use_ldfa_linear', False)
@@ -146,54 +147,53 @@ def build_model(bench_cfg, method_cfg, device, dtype):
 
 # ── FLOPs measurement ─────────────────────────────────────────────────────────
 
-def measure_flops(model, x, y, n_iters=3):
-    """Return total (fwd + bwd) FLOPs for one batch."""
-    # Forward
-    with torch.no_grad():
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA],
-            with_flops=True) as prof:
-            for _ in range(n_iters):
-                _ = model(x)
-    fwd = sum(e.flops for e in prof.key_averages()
-              if hasattr(e, 'flops') and e.flops is not None) / n_iters
-
-    # Backward (recompute graph each iter to avoid memory accumulation)
-    x_proxy = x.float().requires_grad_(True)
-    bwd = 0.0
-    for _ in range(n_iters):
-        # Graph is built outside the profiler, so only the backward pass is profiled
-        out = model(x_proxy.to(x.dtype))
-        loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA],
-            with_flops=True) as prof:
-            loss.backward()
-        model.zero_grad()
-        bwd += sum(e.flops for e in prof.key_averages()
-                   if hasattr(e, 'flops') and e.flops is not None)
-    bwd /= n_iters
-
-    return fwd + bwd  # total FLOPs per batch
+def training_loss(outputs, targets, method_cfg):
+    """Loss of vit_training/train_vit.py: soft-target cross-entropy with Mixup/CutMix, else cross-entropy."""
+    ls = float(method_cfg.get('label_smoothing', 0.0))
+    if float(method_cfg.get('mixup_alpha', 0.0)) > 0 or float(method_cfg.get('cutmix_alpha', 0.0)) > 0:
+        log_probs = torch.nn.functional.log_softmax(outputs, dim=-1)
+        loss = -(targets * log_probs).sum(dim=-1).mean()
+        if ls > 0:
+            loss = (1 - ls) * loss + ls * (-log_probs.mean(dim=-1).mean())
+        return loss
+    return torch.nn.functional.cross_entropy(outputs, targets.argmax(dim=-1), label_smoothing=ls)
 
 
-# ── optimizer step and Q,P refactorization FLOPs ──────────────────────────────
+def measure_flops(model, x, y, method_cfg):
+    """Return the FLOPs of one training step's forward + loss + backward on the batch x
+    (y: soft targets), counted op by op with OpFlopCounter."""
+    with OpFlopCounter() as counter:
+        training_loss(model(x), y, method_cfg).backward()
+    model.zero_grad()
+    return counter.flops
+
+
+# ── op-by-op FLOPs counter (fwd + bwd, optimizer step, Q,P refactorization) ────
 
 # vit_training/train_vit.py re-initializes Q,P from an SVD of W every len(train_loader) // 2 steps
 REFACTORIZATIONS_PER_EPOCH = 2
 
+# FLOPs per output element (each add, multiply, divide, compare or transcendental is one FLOP)
 ELEMENTWISE_FLOPS = {'add': 1, 'sub': 1, 'mul': 1, 'div': 1, 'sqrt': 1, 'rsqrt': 1, 'reciprocal': 1,
                      'neg': 1, 'pow': 1, 'exp': 1, 'log': 1, 'lerp': 3, 'addcmul': 3, 'addcdiv': 3}
+# FLOPs per element of the first input: reductions and the network's nonlinear / normalization ops
+SOFTMAX_FLOPS = 5                                    # max, subtract, exp, sum, divide
+INPUT_ELEMENT_FLOPS = {'sum': 1, 'mean': 1, 'clamp': 2,
+                       '_softmax': SOFTMAX_FLOPS, '_softmax_backward_data': 4,
+                       '_log_softmax': SOFTMAX_FLOPS, '_log_softmax_backward_data': 4,
+                       'gelu': 5, 'gelu_backward': 11,
+                       'native_layer_norm': 7, 'native_layer_norm_backward': 12,
+                       'native_dropout': 2, 'native_dropout_backward': 2}
 
 
 class OpFlopCounter(TorchDispatchMode):
     """FLOPs of every op PyTorch executes inside the context.
 
-    Matrix multiplies are counted from their shapes (2·m·k·n), elementwise ops per element, and
-    QR / SVD, whose LAPACK internals are not visible op by op, with the Golub & Van Loan
-    operation counts for their shapes.
+    Matrix multiplies are counted from their shapes (2·m·k·n); convolutions and fused attention
+    (scaled_dot_product_attention, forward and backward) with torch.utils.flop_counter's formulas,
+    plus the softmax of the attention scores; elementwise, reduction, nonlinear and normalization
+    ops per element; and QR / SVD, whose LAPACK internals are not visible op by op, with the
+    Golub & Van Loan operation counts for their shapes. Ops that only move data count 0.
     """
 
     def __init__(self):
@@ -221,6 +221,18 @@ class OpFlopCounter(TorchDispatchMode):
         elif op == '_linalg_svd':                    # thin SVD with U and V (R-SVD)
             m, n = sorted(args[0].shape[-2:], reverse=True)
             self.flops += 6 * m * n * n + 20 * n ** 3
+        elif op in ('convolution', '_convolution', 'convolution_backward'):
+            self.flops += flop_registry[func._overloadpacket](*args, **kwargs, out_val=out)
+        elif 'scaled_dot_product' in op:             # fused attention: Q·Kᵀ, softmax, ·V
+            if op.endswith('_backward'):
+                q, k, v = args[1:4]
+                self.flops += sdpa_backward_flop_count(args[0].shape, q.shape, k.shape, v.shape)
+            else:
+                q, k, v = args[:3]
+                self.flops += sdpa_flop_count(q.shape, k.shape, v.shape)
+            self.flops += SOFTMAX_FLOPS * q.shape[:-1].numel() * k.shape[-2]
+        elif op in INPUT_ELEMENT_FLOPS:
+            self.flops += INPUT_ELEMENT_FLOPS[op] * args[0].numel()
         elif op in ELEMENTWISE_FLOPS:
             per_element = ELEMENTWISE_FLOPS[op] + (op in ('add', 'sub') and kwargs.get('alpha', 1) != 1)
             if foreach:
@@ -281,14 +293,13 @@ def get_flops_per_batch(label, method_cfg_path, bench_cfg, use_ldfa_override=Non
     device = bench_cfg['device']
     dtype  = torch.bfloat16 if bench_cfg.get('dtype', 'bfloat16') == 'bfloat16' else torch.float32
     bs     = bench_cfg['batch_size']
-    n_iters = bench_cfg.get('n_iters', 3)
 
     model = build_model(bench_cfg, method_cfg, device, dtype)
     x = torch.randn(bs, 3, bench_cfg['image_size'], bench_cfg['image_size'],
                     device=device, dtype=dtype)
-    y = torch.randn(bs, bench_cfg['num_classes'], device=device, dtype=dtype)
+    y = torch.softmax(torch.randn(bs, bench_cfg['num_classes'], device=device, dtype=dtype), dim=-1)
 
-    total_flops = measure_flops(model, x, y, n_iters=n_iters)
+    total_flops = measure_flops(model, x, y, method_cfg)
     flops_gflops = total_flops / 1e9
     del model
     torch.cuda.empty_cache()

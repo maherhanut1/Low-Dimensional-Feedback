@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from plot_imagenet1k_flops_accuracy import measure_update_flops, REFACTORIZATIONS_PER_EPOCH
+from plot_imagenet1k_flops_accuracy import measure_flops, measure_update_flops, REFACTORIZATIONS_PER_EPOCH
 
 
 def replace_linear(module, new_linear_cls, **kwargs):
@@ -30,34 +30,6 @@ def replace_linear(module, new_linear_cls, **kwargs):
             setattr(module, name, new_linear)
         else:
             replace_linear(child, new_linear_cls, **kwargs)
-
-
-def measure_flops(model, x, y, n_iters=5):
-    # Forward FLOPs
-    with torch.no_grad():
-        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
-                                                torch.profiler.ProfilerActivity.CUDA],
-                                    with_flops=True) as prof:
-            for _ in range(n_iters):
-                _ = model(x)
-    fwd_flops = sum([evt.flops for evt in prof.key_averages() if hasattr(evt, 'flops') and evt.flops is not None]) / n_iters
-
-    # Backward FLOPs — recompute graph each iteration to avoid retain_graph memory accumulation
-    x_fp32 = x.float().requires_grad_(True)  # bfloat16 doesn't support grad on input; use float32 proxy
-    bwd_flops = 0.0
-    for _ in range(n_iters):
-        # Graph is built outside the profiler, so only the backward pass is profiled
-        out = model(x_fp32.to(x.dtype))
-        loss = (out * y).sum() if isinstance(out, torch.Tensor) else (out.logits * y).sum()
-        with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU,
-                                                torch.profiler.ProfilerActivity.CUDA],
-                                    with_flops=True) as prof:
-            loss.backward()
-        model.zero_grad()
-        bwd_flops += sum([evt.flops for evt in prof.key_averages() if hasattr(evt, 'flops') and evt.flops is not None])
-    bwd_flops /= n_iters
-
-    return fwd_flops, bwd_flops
 
 
 def get_flops_per_epoch(config_path, train_config_path, ranks_list):
@@ -80,7 +52,6 @@ def get_flops_per_epoch(config_path, train_config_path, ranks_list):
     num_classes = config.get('num_classes', 1000)
     device = config.get('device', 'cpu')
     dtype_str = config.get('dtype', 'float32')
-    n_iters = config.get('n_iters', 3)
     
     # Model parameters
     patch_size = config.get('patch_size', 16)
@@ -90,15 +61,15 @@ def get_flops_per_epoch(config_path, train_config_path, ranks_list):
     num_heads = config.get('num_heads', 12)
     mlp_ratio = config.get('mlp_ratio', 4.0)
     qkv_bias = config.get('qkv_bias', True)
-    drop_rate = config.get('drop_rate', 0.0)
-    attn_drop_rate = config.get('attn_drop_rate', 0.0)
-    drop_path_rate = config.get('drop_path_rate', 0.0)
+    drop_rate = train_config.get('drop_rate', config.get('drop_rate', 0.0))
+    attn_drop_rate = train_config.get('attn_drop_rate', config.get('attn_drop_rate', 0.0))
+    drop_path_rate = train_config.get('drop_path_rate', config.get('drop_path_rate', 0.0))
     
     dtype = torch.float32 if dtype_str == 'float32' else (torch.bfloat16 if dtype_str == 'bfloat16' else torch.float16)
     
     # Prepare input
     x = torch.randn(batch_size, 3, image_size, image_size, device=device, dtype=dtype)
-    y = torch.randn(batch_size, num_classes, device=device, dtype=dtype)
+    y = torch.softmax(torch.randn(batch_size, num_classes, device=device, dtype=dtype), dim=-1)
     
     flops_dict = {}
     
@@ -113,10 +84,10 @@ def get_flops_per_epoch(config_path, train_config_path, ranks_list):
     )
     replace_linear(model_bp, BP_Linear)
     model_bp = model_bp.to(device=device, dtype=dtype)
-    fwd_bp, bwd_bp = measure_flops(model_bp, x, y, n_iters=n_iters)
+    fwd_bwd_bp = measure_flops(model_bp, x, y, train_config)
     del model_bp
     opt_step, refactor = measure_update_flops(config, dict(train_config, use_ldfa_linear=False), device)
-    flops_dict['BP'] = ((fwd_bp + bwd_bp) / 1e9, opt_step, refactor)
+    flops_dict['BP'] = (fwd_bwd_bp / 1e9, opt_step, refactor)
     print(f"BP: {flops_dict['BP'][0]:.2f} GFLOPs per batch, optimizer step {opt_step:.3f} GFLOPs")
     
     # Measure LDFA for each rank
@@ -131,11 +102,11 @@ def get_flops_per_epoch(config_path, train_config_path, ranks_list):
         )
         replace_linear(model_ldfa, LDFA_Linear, rank=rank)
         model_ldfa = model_ldfa.to(device=device, dtype=dtype)
-        fwd_ldfa, bwd_ldfa = measure_flops(model_ldfa, x, y, n_iters=n_iters)
+        fwd_bwd_ldfa = measure_flops(model_ldfa, x, y, train_config)
         del model_ldfa
         opt_step, refactor = measure_update_flops(
             config, dict(train_config, use_ldfa_linear=True, ldfa_rank=rank), device)
-        flops_dict[rank] = ((fwd_ldfa + bwd_ldfa) / 1e9, opt_step, refactor)
+        flops_dict[rank] = (fwd_bwd_ldfa / 1e9, opt_step, refactor)
         print(f"LDFA rank {rank}: {flops_dict[rank][0]:.2f} GFLOPs per batch, optimizer step {opt_step:.3f} GFLOPs, "
               f"Q,P refactorization {refactor:.1f} GFLOPs")
     

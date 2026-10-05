@@ -2,7 +2,7 @@ batch_size: 512           # profiling batch size = per-GPU training batch (2 GPU
 train_batch_size: 1024   # effective training batch size (2 GPUs × 512), used to scale FLOPs
 image_size: 224
 num_classes: 1000
-batches_per_epoch: 1251  # ceil(1_281_167 / 1024)
+batches_per_epoch: 1251  # 1_281_167 / 1024 = 1251.1 full training batches per epoch
 device: cuda:0
 dtype: bfloat16
 n_iters: 3
