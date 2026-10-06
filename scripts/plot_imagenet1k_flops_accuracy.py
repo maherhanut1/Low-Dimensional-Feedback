@@ -162,6 +162,12 @@ def training_loss(outputs, targets, method_cfg):
 def measure_flops(model, x, y, method_cfg):
     """Return the FLOPs of one training step's forward + loss + backward on the batch x
     (y: soft targets), counted op by op with OpFlopCounter."""
+    # Counted op by op rather than with torch.profiler(with_flops=True): the profiler has FLOP
+    # formulas only for matmuls, conv2d and a few elementwise ops, and reports 0 for timm's fused
+    # attention (scaled_dot_product_attention, forward and backward), layer norm, GELU and the
+    # convolution backward. On the matmuls both agree; the profiler misses the rest, e.g. 52 GFLOPs
+    # of a 995 GFLOPs CIFAR-10 BP batch (47 of them attention). That missed work is the same for BP
+    # and LDFA, so leaving it out also overstates LDFA's relative FLOPs savings.
     with OpFlopCounter() as counter:
         training_loss(model(x), y, method_cfg).backward()
     model.zero_grad()

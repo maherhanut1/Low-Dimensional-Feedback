@@ -14,6 +14,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modules.opt_layers.LDFA_Linear import Linear as LDFA_Linear
 from modules.opt_layers.BP_Linear import Linear as BP_Linear
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# FLOPs are counted op by op (OpFlopCounter), not with torch.profiler, which reports 0 for fused
+# attention, layer norm and GELU (see measure_flops in plot_imagenet1k_flops_accuracy.py)
 from plot_imagenet1k_flops_accuracy import measure_flops, measure_update_flops, REFACTORIZATIONS_PER_EPOCH
 
 
@@ -167,6 +169,8 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, tra
         # TensorBoard step s is logged after s + 1 completed epochs (Trainer.train logs the 0-based epoch index)
         epochs = row['Mean_Steps_to_90pct'] + 1
         epochs_std = row.get('Std_Steps_to_90pct', 0.0)  # Get std if available
+        # Number of runs behind the mean: 'N' (aggregate_training_summary.py) or 'Num_Experiments' (older CSVs)
+        n_runs = row.get('N', row.get('Num_Experiments', 5))
         steps_to_convergence[rank] = epochs
         steps_to_convergence_std[rank] = epochs_std
         
@@ -197,11 +201,11 @@ def plot_flops_accuracy_combined(convergence_csv, accuracy_csv, config_path, tra
         if rank in flops_per_batch:
             flops_to_convergence[rank] = (epochs * flops_per_epoch[rank]) / 1e6  # Convert to PFLOPs
             flops_to_convergence_std[rank] = (epochs_std * flops_per_epoch[rank]) / 1e6
-            flops_to_convergence_sem[rank] = flops_to_convergence_std[rank] / np.sqrt(5)
+            flops_to_convergence_sem[rank] = flops_to_convergence_std[rank] / np.sqrt(n_runs)
         else:
             flops_to_convergence[rank] = (epochs * flops_per_epoch['BP']) / 1e6
             flops_to_convergence_std[rank] = (epochs_std * flops_per_epoch['BP']) / 1e6
-            flops_to_convergence_sem[rank] = flops_to_convergence_std[rank] / np.sqrt(5)
+            flops_to_convergence_sem[rank] = flops_to_convergence_std[rank] / np.sqrt(n_runs)
     
     # Prepare data for plotting
     # Reverse order: BP first, then 64, 36, 32, 24, 20, 16, 10

@@ -28,6 +28,8 @@ import matplotlib as mpl
 import yaml
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# get_flops_per_batch counts FLOPs op by op (OpFlopCounter), not with torch.profiler, which reports 0
+# for fused attention, layer norm and GELU (see measure_flops in plot_imagenet1k_flops_accuracy.py)
 from plot_imagenet1k_flops_accuracy import (plot_flops_accuracy_figure, get_flops_per_batch,
                                             REFACTORIZATIONS_PER_EPOCH)
 
